@@ -10,7 +10,7 @@
 #   systems is reasonably high.  Because of this the node identity is appended to 
 #   ses and pid values since the internal systems should remove duplicate values.
 #
-@load util
+@load auditd_policy/util
 
 module AUDITD_POLICY;
 
