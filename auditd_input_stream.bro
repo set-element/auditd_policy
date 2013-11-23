@@ -10,8 +10,7 @@
 #       For user identificaton just ue a string type since the id will normally be a
 #       legitimate account.
 #
-@load util
-#@load auditd_core
+@load auditd_policy/util
 
 @load frameworks/communication/listen
 @load base/frameworks/input
@@ -27,7 +26,8 @@ export {
 		d: string;
 	};
 
-	const data_file = "/tmp/df.log";
+	const data_file = "/tmp/df.log" &redef;
+	const DATANODE = F &redef;
 
 	const dispatcher: table[string] of function(_data: string): count &redef;
 	}
@@ -224,7 +224,6 @@ redef dispatcher += {
 	["USER_OBJ"] = user_f,
 	};
 
-#event line(description: Input::EventDescription, tpe: Input::Event, _data: string)
 event line(description: Input::EventDescription, tpe: Input::Event, LV: lineVals)
 	{
 	# Each line is fed to this event where it is digested and sent to the dispatcher 
@@ -243,8 +242,18 @@ event line(description: Input::EventDescription, tpe: Input::Event, LV: lineVals
 	}	
 
 
+
+
+event init_datastream()
+	{
+	if ( DATANODE && (file_size(data_file) != -1.0) ) {
+		Input::add_event([$source=data_file, $reader=Input::READER_RAW, $mode=Input::TSTREAM, $name="auditd", $fields=lineVals, $ev=line]);
+		}	
+
+	}
+
 event bro_init()
 	{
-	Input::add_event([$source=data_file, $reader=Input::READER_RAW, $mode=Input::STREAM, $name="auditd", $fields=lineVals, $ev=line]);
+	schedule 1 sec { init_datastream() };
 	}
 
