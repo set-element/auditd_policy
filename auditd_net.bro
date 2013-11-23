@@ -5,7 +5,7 @@
 #  more stateful network data may take a while ...
 
 
-@load util
+@load auditd_policy/util
 
 module AUDITD_NET;
 
@@ -13,14 +13,14 @@ export {
 
 	type socket_data: record {
 		domain: count &default=0;
-		type: count &default=0;
+		s_type: count &default=0;
 		ts: time;
 		state: count &default=0;
 		};
 
 	# data struct to hold socket data
 	# index the table via node and ident
-	socket_lookup: table[string] of socket_data;
+	global socket_lookup: table[string] of socket_data;
 
 	### ----- Config ----- ###
 	global filter_tcp_only = T &redef;
@@ -57,7 +57,7 @@ function syscall_socket(inf: Info) : count
 	if ( index !in socket_lookup ) {
 	
 		t_socket_data$domain = a0;
-		t_socket_data$type = a1;
+		t_socket_data$s_type = a1;
 		t_socket_data$ts = ts;
 		t_socket_data$state = 1;
 	
