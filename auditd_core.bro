@@ -10,7 +10,8 @@
 #   systems is reasonably high.  Because of this the node identity is appended to 
 #   ses and pid values since the internal systems should remove duplicate values.
 #
-@load util
+@load auditd_policy/util
+@load auditd_policy/auditd_policy.bro
 
 module AUDITD_CORE;
 
@@ -634,10 +635,9 @@ event auditd_user(index: string, action: string, ts: time, node: string, ses: in
 
 	# if the last record, print it
 	if ( last_record(index) == 1 ) {
-if ( AUDITD_POLICY::AUDITD_POLICY_LOAD )
-		#event auditd_policy_dispatcher(copy_identity(index,node));
+
 		event AUDITD_POLICY::auditd_policy_dispatcher(copy_identity(index,node));
-#@endif
+
 		t_Info = sync_identity(index,node);
 		Log::write(LOG, t_Info);
 		delete_action(index,node);
