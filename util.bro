@@ -1,13 +1,32 @@
-## ----- functions ----- ##
+# util.bro  Scott Campbell 11/29/13
+# 
+# Various utility functions and constants used throughout the auditd infrastructure
+#  scripts.  For the time being this is not part of any particular name space 
+#  but that will change when things settle out a bit.
 #
-# utility functions for converting string types to native values
-#   as well as the Info and identity data structures and the data
-#   tables shared by all other policies ...
-#
+
+	### --- ## --- ###
+	# Data structs and constants
+	### --- ## --- ###
+
 	const ID_DEFAULT = "-1";
 	const INFO_NULL  = "NULL";
 
-	const zero_int: int = 0;	
+	const zero_int: int = 0;
+	
+	# Make bookeepng easier - note vector counting starts at zero!
+
+	## -- identity info (process) --
+	const v_auid  = 0;	# audit id, immutable even if id changes	
+	const v_uid   = 1;	# user id
+	const v_gid   = 2;	# group id
+	const v_euid  = 3;	# effective user id
+	const v_egid  = 4;	# effective group id
+	const v_suid  = 5;	# set user id
+	const v_sgid  = 6;	# set group id
+	## -- identity info (file system) --
+	const v_fsuid = 7;	# file system user id
+	const v_fsgid = 8;	# file system group id
 
 	# Used to keep track of the assigned *id/*gid values for a per host session identity.
 	#   This is the description of the who in an auditable event.  It needs to be stored
@@ -17,20 +36,14 @@
 	# It is logged as a component of the Info record, and updated at a:b:1 for the primary
 	#   / alpha record.
 	#
+
+	# To better facilitate the handling of the identity information, we break it out into
+	#  a vector which makes dealing with it *much* simpler.
+	
 	type identity: record {
 		ses:       int &log &default=-1;       	        # numeric session id or 'unset'
 		node:   string &log &default="NULL";            # what host is this happening on
-		## -- identity info (process) --
-		auid:   string &log &default=ID_DEFAULT;	# audit id, immutable even if id changes
-		uid:    string &log &default=ID_DEFAULT;	# user id
-		gid:    string &log &default=ID_DEFAULT;	# group id
-		euid:   string &log &default=ID_DEFAULT;	# effective user id
-		egid:   string &log &default=ID_DEFAULT;	# effective group id
-		suid:   string &log &default=ID_DEFAULT;	# set user id
-		sgid:   string &log &default=ID_DEFAULT;	# set group id
-		## -- identity info (file system) --
-		fsuid:  string &log &default=ID_DEFAULT;	# file system user id
-		fsgid:  string &log &default=ID_DEFAULT;	# file system group id
+		idv: vector of string;
 		};
 	
 
@@ -86,9 +99,9 @@
 	## regx to test data types
 	global kv_splitter: pattern = / / &redef;
 	global count_match: pattern = /^[0-9]{1,16}$/;
-	global port_match: pattern = /^[0-9]{1,5}\/(tcp|udp|icmp)$/;
-	global time_match: pattern = /^[0-9]{9,10}.[0-9]{0,6}$/;
-	global ip_match: pattern = /((\d{1,2})|(1\d{2})|(2[0-4]\d)|(25[0-5]))/;
+	global port_match: pattern  = /^[0-9]{1,5}\/(tcp|udp|icmp)$/;
+	global time_match: pattern  = /^[0-9]{9,10}.[0-9]{0,6}$/;
+	global ip_match: pattern    = /((\d{1,2})|(1\d{2})|(2[0-4]\d)|(25[0-5]))/;
 
 	global v16: vector of count = vector(2,3,4,5,6,7,8,9,10,11,12,13,14,15,16);
 	global v2s: vector of count = vector(2,4,6);
@@ -100,7 +113,7 @@
 	const ADDR_CONV_ERROR: addr = 127.4.3.2;
 	const TIME_CONV_ERROR: time = double_to_time( to_double("0.000001"));
 	const PORT_CONV_ERROR: port = 0/tcp;
-	const INT_CONV_ERROR: int = -100;
+	const INT_CONV_ERROR: int   = -100;
 	const STRING_CONV_ERROR: string = "SCERROR";
 
 	#
@@ -109,18 +122,43 @@
 	const DATA_CONV_ERROR:    count = 1;
 	const DATA_NOERROR:       count = 0;
 
+	### --- SOCKET --- ###
+	# The socket type will be used as a proxy for holding 
+	#  information about a socket oriented event.
+	#
 	# for a0 of socket call define the /domain/
-	const AF_UNIX         1               /* local to host (pipes) */
-	const AF_INET         2               /* internetwork: UDP, TCP, etc. */
+	#
+	const AF_UNIX: count = 1 # local to host (pipes)
+	const AF_INET: count = 2 # internetwork: UDP, TCP, etc.
 
 	# For a1 of the socket call, you define the socket /type/
 	#  this is both a handy reference and a way of making the data
 	#  more human readable....
 	#
 	const SOCK_STREAM: count = 1	# stream socket 
-	const SOCK_DGRAM: count =  2	# datagram socket
-	const SOCK_RAW: count =    3	# raw-protocol interface
+	const SOCK_DGRAM: count  = 2	# datagram socket
+	const SOCK_RAW: count    = 3	# raw-protocol interface
+	#
+	
+	type socket_data: record {
+		domain: count &default=0;		# UNIX/INET
+		s_type: count &default=0;		# STREAM/DGRAM
+		ts: time;				# start time
+		o_addr_info: string &default="NULL";	# 
+		o_port_info: string &default="NULL";	# 
+		r_addr_info: string &default="NULL";	# 
+		r_port_info: string &default="NULL";	# 
+		state: count &default=0;		# see below:
+		};
 
+	#		 Note on socket state:
+	# 			0 = new
+	#			1 = init
+	#			2 = conn	 -> make connection 
+	#			3 = bind|listen  -> create listener
+	#			4 = accept 	 -> listener connect
+	# 
+	### --- END SOCKET --- ###
 
 	#
 	# Return data structure which includes both an (non)error code
@@ -134,6 +172,13 @@
 		data: string &default = STRING_CONV_ERROR;
 		ret: count &default = DATA_NULL;
 		};
+
+## ----- functions ----- ##
+#
+# utility functions for converting string types to native values
+#   as well as the Info and identity data structures and the data
+#   tables shared by all other policies ...
+#
 
 function s_time(s: string) : time_return
 	{

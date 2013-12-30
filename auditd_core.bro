@@ -31,17 +31,22 @@ export {
 	# exported functions
 	global get_action_id: function(index: string, node: string) : string;
 	global get_identity_id: function(ses: int, node: string) : string;
+
 	global get_action_obj: function(index: string, node: string) : Info;
 	global get_identity_obj: function(ses: int, node: string) : identity;
+
 	global sync_identity: function(index: string, node: string) : Info;
 	global copy_identity: function(index: string, node: string) : Info;
+
+	global update_action: function(i: Info);
+	global build_identity: function(auid: string, uid: string, gid: string, euid: string, egid: string, fsuid: string, fsgid: string, suid: string, sgid: string) : vector or string;
+	global update_identity: function(ses: int, node: string, tvid: vector of string) : count;
+
 	global delete_action: function(index: string, node: string);
 	global string_test: function(s: string) : bool;
 	global int_test: function(i: int) : bool;
 	global time_test: function(t: time) : bool;
 	global last_record: function(index: string): count;
-	global update_action: function(i: Info);
-	global update_identity: function(ses: int, node: string, auid: string, uid: string, gid: string, euid: string, egid: string, fsuid: string, fsgid: string, suid: string, sgid: string) : count;
 
 	}
 
@@ -228,7 +233,17 @@ function time_test(t: time) : bool
 	return ret;
 }
 
-function update_identity(ses: int, node: string, auid: string, uid: string, gid: string, euid: string, egid: string, fsuid: string, fsgid: string, suid: string, sgid: string) : count
+function build_identity(auid: string, uid: string, gid: string, euid: string, egid: string, fsuid: string, fsgid: string, suid: string, sgid: string) : vector of string
+{
+	# simple function to take the big blob of text identities and put them into a more
+	#  useful form for consumption by other heuristics.
+	# 
+	local t_identity: vector of string = vector(auid, uid, gid, euid, egid, suid, sgid, fsuid, fsgid);
+
+	return t_identity;
+}
+
+function update_identity(ses: int, node: string, tvid: vector of string) : count
 {
 	# Update values for the identity object.  If the obj is not in the
 	#   identityState table, create it
@@ -238,6 +253,7 @@ function update_identity(ses: int, node: string, auid: string, uid: string, gid:
 	if ( key == "NULL" )
 		return 2;
 
+	# Pull up old data if it exists
 	if ( key in identityState )
 		t_identity = identityState[key];
 
@@ -248,32 +264,10 @@ function update_identity(ses: int, node: string, auid: string, uid: string, gid:
 	if ( string_test(node) ) 
 		t_identity$node = node;
 	
-	if ( string_test(auid) )
-		t_identity$auid = auid;
-
-	if ( string_test(uid) )
-		t_identity$uid = uid;
-
-	if ( string_test(gid) )
-		t_identity$gid = gid;
-
-	if ( string_test(euid) )
-		t_identity$euid = euid;
-
-	if ( string_test(egid) )
-		t_identity$egid = egid;
-
-	if ( string_test(fsuid) )
-		t_identity$fsuid = fsuid;
-
-	if ( string_test(fsgid) )
-		t_identity$fsgid = fsgid;
-
-	if ( string_test(suid) )
-		t_identity$suid = suid;
-
-	if ( string_test(sgid) )
-		t_identity$sgid = sgid;
+	# move through identity vector
+	for ( i in tid ) {
+		t_identity$idv[i] = tvid[i];
+		}
 
 	identityState[key] = t_identity;
 
@@ -379,7 +373,8 @@ event auditd_generic(index: string, action: string, ts: time, node: string, ses:
 		t_Info$ext = ext;
 
 	# identification
-	update_identity(ses, node, auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
+	local tvid = build_identity( auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
+	update_identity(ses, node, tvid);
 
 	update_action(t_Info);
 
@@ -572,7 +567,8 @@ event auditd_syscall(index: string, action: string, ts: time, node: string, ses:
 		t_Info$ext = ext;
 
 	# identification
-	update_identity(ses, node, auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
+	local tvid = build_identity(ses, node, auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
+	update_identity(ses, node, tvid);
 
 	update_action(t_Info);
 
@@ -629,7 +625,8 @@ event auditd_user(index: string, action: string, ts: time, node: string, ses: in
 		t_Info$ext = ext;
 
 	# identification
-	update_identity(ses, node, auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
+	local tvid = build_identity(auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
+	update_identity(ses, node, auid, tvid);
 
 	update_action(t_Info);
 

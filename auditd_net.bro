@@ -10,103 +10,175 @@
 module AUDITD_NET;
 
 export {
+	# AUDITD_NET log stream identifier
+	redef enum Log::ID += { LOG };
 
-	type socket_data: record {
-		domain: count &default=0;
-		s_type: count &default=0;
-		ts: time;
-		state: count &default=0;
+	type Info: record {
+		# 
+
 		};
 
-	# data struct to hold socket data
-	# index the table via node and ident
-	global socket_lookup: table[string] of socket_data;
+	### ----- Data Structs ----- ###
+	# Interesting problem here in that we are looking for
+	#   correlations between two partial conn_id objects.
+	#   [sip,sp] -> [dip,dp] :: index [dip,dp] of 
+	type conn_obj: record {
+		orig_h: addr; 	#
+		orig_p: port; 	#
+		ts: time; 	# timstamp of initial data point
+		node: string; 	# node which can be mapped via static table 
+
+		# id - just tie identifiers together
+		net_identity: string &default="NULL";
+		sys_identity: string &default="NULL";
+		#
+		tie_identity: string &default="NULL";
+		};
+
+	type dest_set: record {
+		# the index here is the source address since there is no real
+		#  way to determine the source port from a normal system call.
+		dst_set: table[string] of conn_obj;
+		};
+
+	# And now a place to put the dest_set
+	global dest_library: table[string] of dest_set;
+
+	# table mapping [node] <-> [ip]
+	global node_to_ip: table[string] of ip;
+	global ip_to_node: table[ip] of string;
 
 	### ----- Config ----- ###
 	global filter_tcp_only = T &redef;
 
 	### ----- Event/Functions ----- ###
+	# Value from audit side
+	global audit_conn_register function(cid: conn_id, inf: Info) : count;
+	# Value from net side
+	global net_conn_register function(c: connection) : count;
 
+	# A little somthing to tie them all together
+	global conn_collate
 
 	} # end export
 
-# Note on socket state:
-# 	0 = new
-#	1 = init
-#	2 = conn	 -> make connection 
-#	3 = bind|listen  -> create listener
-#	4 = accept 	 -> listener connect
-# 
 
 ### ----- # ----- ###
 #      Functions
 ### ----- # ----- ###
-function syscall_socket(inf: Info) : count
-	{
-	# Function test for socket exist.
-	# If none, create; if exist, test dt 
-	local ret_val = 0;
-	local t_socket_data: socket_data;
 
-	local index = fmt("%s%s", inf$ses, inf$node);
-
-	# If this is not a TCP connection, bail ...
-	if ( filter_tcp_only && ( (a0 != AF_INET) || (a1 != SOCK_STREAM)))
-		return ret_val;
-
-	if ( index !in socket_lookup ) {
-	
-		t_socket_data$domain = a0;
-		t_socket_data$s_type = a1;
-		t_socket_data$ts = ts;
-		t_socket_data$state = 1;
-	
-		ret_val = 1;
-		socket_lookup[index] = t_socket_data;
-
-		}
-	else {
-		# skip for now
-		ret_val = 2;
-		}
-
-	return ret_val;
-	} # syscall_socket end
-
-function syscall_connect(inf: Info) : count
+function audit_conn_register(cid: conn_id, inf: Info) : count
 	{
 	local ret_val = 0;
 
-	# check to see if the socket struct is in state == 1
-	if ( syscall_socket(inf) == 1 ) {
-
-		local index = fmt("%s%s", inf$ses, inf$node);
-		socket_lookup[index]$state = 2;
-
-		# The connect() call identifies the time to
-		#  register a new connection.  For now it will
-		#  be any connection, but filtering can be done 
-		#  to limit it to ! is_local() .
-		event register_audit_conn(inf);
-		ret_val = 1;
-		}
 
 	return ret_val;
 	} # syscall_connection end
+
+function net_conn_register(c: connection) : count
+	{
+
+
+	}
+
+# identity is uniq_id() value, _type is {1==audit, 2==net}
+#
+function conn_collate(cid: conn_id, identity: string, _type: count, ts: time, node: string) : string
+	{
+	local ret_val = "NULL";
+
+	# generate the index identity
+	# the values have to exist to get this far ...
+	local lib_index = fmt("%s%s", cid$resp_h, cid$resp_p);
+
+	local t_ds: dest_set;
+	local t_co: conn_obj;
+
+	# dest_set index needs to be calculated
+	local ds_index: string;
+
+	if ( _type == 1 ) {
+		# need to look up address
+		if ( node in node_to_ip ) 
+			ds_index = fmt("%s", node_to_ip[node]);
+		else
+			# This kinda sucks
+			ds_index = "0.0.0.0";
+		}
+	else
+		# net type so we can trust the value of orig_h
+		ds_index = fmt("%s", cid$orig_h);
+
+
+	if ( lib_index !in dest_library )
+		{
+		# There is no dest ip:port pair, so we
+		# need to build the whole object set...
+		 
+		# Start with the conn_obj
+		t_co$resp_h = cid$resp_h;
+		t_co$resp_p = cid$resp_h;
+
+		if ( _type == 1 )
+			t_co$sys_identity = identity;
+		else
+			t_co$net_identity = identity;
+
+		t_co$tie_identity = uniq_id();
+		t_co$ts = ts;
+
+		# now drop the t_co in to the t_ds
+		t_ds[ds_index] = t_co;
+		
+		# and finally register the t_ds into the dest_library
+		dest_library[lib_index] = t_ds;
+		} # end index_id !in dest_library
+	else {
+		# index_id is in the dest_library
+		t_ds = dest_library[lib_index];
+
+		# Since t_ds can hold (many) t_co objects - ie many systems might
+		#   be connecting to the same service on the same host - we need to 
+		#   do a little cheking here.
+		#
+		if ( ds_index in t_ds ) {
+
+			# If there is one value we test and are happy, else we
+			#   dig and suffer
+			if ( |t_ds[ds_index]| == 1 ) {
+ 
+				# The t_co object just might be there 
+				t_co = t_ds[ds_index];
+
+				if ( abs( t_co$ts - ts ) <= time_window ) {
+
+					# XXX fill then LOG!
+					}
+				}
+			else {
+				# mmmm, dig dig dig
+				local s: table[string] of conn_obj;
+				s = t_ds[ds_index];
+
+				for ( i in s ) {
+
+					if ( abs( s[i]$ts - ts ) <= time_window ) {
+
+						}
+					}
+
+
+				}
+
+		} # end index_id in dest_library
+	} # end function
 
 
 ### ----- # ----- ###
 #      Events
 ### ----- # ----- ###
+event bro_init() &priority = 5
+{
+	  Log::create_stream(AUDITD_NET::LOG, [$columns=Info]);
+}
 
-event syscall_register(node: string, ident: identity, ts: time, s_host: string, s_serv: string)
-	{
-	# convert address and port to real
-	local r_addr = s_addr(s_host);
-	local r_port = s_port(s_serv);
-
-	if ( (r_addr == ADDR_CONV_ERROR) || (r_port == PORT_CONV_ERROR) )
-		return;
-
-
-	}
