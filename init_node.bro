@@ -6,9 +6,9 @@
 # To load, modify the etc/node.cfg so by adding the "aux_scripts"
 # directive. For example:
 #
-# [isshd]
+# [auditd]
 # type=worker
 # host=sigma-n
-# aux_scripts="isshd_policy/init_node"
+# aux_scripts="auditd_policy/init_node"
 #
 redef AUDITD_IN_STREAM::DATANODE = T;
