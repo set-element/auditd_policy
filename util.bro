@@ -128,16 +128,16 @@
 	#
 	# for a0 of socket call define the /domain/
 	#
-	const AF_UNIX: count = 1 # local to host (pipes)
-	const AF_INET: count = 2 # internetwork: UDP, TCP, etc.
+	const AF_UNIX: count = 1; # local to host (pipes)
+	const AF_INET: count = 2; # internetwork: UDP, TCP, etc.
 
 	# For a1 of the socket call, you define the socket /type/
 	#  this is both a handy reference and a way of making the data
 	#  more human readable....
 	#
-	const SOCK_STREAM: count = 1	# stream socket 
-	const SOCK_DGRAM: count  = 2	# datagram socket
-	const SOCK_RAW: count    = 3	# raw-protocol interface
+	const SOCK_STREAM: count = 1;	# stream socket 
+	const SOCK_DGRAM: count  = 2;	# datagram socket
+	const SOCK_RAW: count    = 3;	# raw-protocol interface
 	#
 	
 	type socket_data: record {
@@ -232,7 +232,7 @@ function s_count(s: string) : count
 	{
 	local ret_val: count = 0;
 
-	local mpr = match_pattern( s, count_match);
+	local mpr = match_pattern(s, count_match);
 
 	if ( mpr$matched )
 		ret_val =  to_count(s);
@@ -246,7 +246,7 @@ function s_addr(s: string) : addr
 	{
 	local ret_val:addr = ADDR_CONV_ERROR;
 
-	local mpr = match_pattern(s_host, ip_match);
+	local mpr = match_pattern(s, ip_match);
 
 	if ( mpr$matched ) {
 		ret_val = to_addr(s);
