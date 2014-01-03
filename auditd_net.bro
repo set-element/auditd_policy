@@ -46,21 +46,24 @@ export {
 	global dest_library: table[string] of dest_set;
 
 	# table mapping [node] <-> [ip]
-	global node_to_ip: table[string] of ip;
-	global ip_to_node: table[ip] of string;
+	global node_to_ip: table[string] of addr;
+	global ip_to_node: table[addr] of string;
 
 	### ----- Config and Constants----- ###
 	global filter_tcp_only = T &redef;
 	const AUDIT_DATA = 1;
 	const NET_DATA = 2;
+	global time_window:double = 2.0 &redef;
+
 	### ----- Event/Functions ----- ###
 	# Value from audit side
-	global audit_conn_register function(cid: conn_id, inf: Info) : count;
+	global audit_conn_register: function(cid: conn_id, inf: Info) : count;
 	# Value from net side
-	global net_conn_register function(c: connection) : count;
+	global net_conn_register: function(id: conn_id, ts: time, uid: string) : count;
+	global conn_collate: function(cid: conn_id, identity: string, _type: count, ts: time, node: string) : string;
 
 	# A little somthing to tie them all together
-	global conn_collate
+	#global conn_collate
 
 	} # end export
 
@@ -68,6 +71,10 @@ export {
 ### ----- # ----- ###
 #      Functions
 ### ----- # ----- ###
+function abs(d: double) : double
+	{
+	return sqrt(d*d);
+	}
 
 function audit_conn_register(cid: conn_id, inf: Info) : count
 	{
@@ -77,10 +84,11 @@ function audit_conn_register(cid: conn_id, inf: Info) : count
 	return ret_val;
 	} # syscall_connection end
 
-function net_conn_register(c: connection) : count
+function net_conn_register(id: conn_id, ts: time, uid: string) : count
 	{
 	local ret_val = 0;
-	conn_collate(c$id, c$uid, AUDIT_NET, c$ts, ip_to_node[c$id$orig_h]); 
+
+	conn_collate(id, uid, NET_DATA, ts, ip_to_node[id$orig_h]); 
 
 	return ret_val;
 	}
@@ -122,7 +130,7 @@ function conn_collate(cid: conn_id, identity: string, _type: count, ts: time, no
 		 
 		# Start with the conn_obj
 		t_co$resp_h = cid$resp_h;
-		t_co$resp_p = cid$resp_h;
+		t_co$resp_p = cid$resp_p;
 
 		if ( _type == AUDIT_DATA ) {
 			t_co$sys_identity = identity;
@@ -136,10 +144,11 @@ function conn_collate(cid: conn_id, identity: string, _type: count, ts: time, no
 			t_co$n_ts = ts;
 			}
 
-		t_co$tie_identity = uniq_id();
+		t_co$tie_identity = unique_id("");
 
 		# now drop the t_co in to the t_ds
-		t_ds[ds_index] = t_co;
+		# 	
+		t_ds$dst_set[ds_index] = t_co;
 		
 		# and finally register the t_ds into the dest_library
 		dest_library[lib_index] = t_ds;
@@ -154,17 +163,17 @@ function conn_collate(cid: conn_id, identity: string, _type: count, ts: time, no
 		#   be connecting to the same service on the same host - we need to 
 		#   do a little cheking here.
 		#
-		if ( ds_index in t_ds ) {
+		if ( ds_index in t_ds$dst_set ) {
 
 			# calc dt
-			local dt = _type == AUDIT_DATA ? ( abs(t_co$n_ts - ts) ) : ( abs(t_co$a_ts - ts) );
+			local dt = _type == AUDIT_DATA ? ( abs(time_to_double(t_co$n_ts) - time_to_double(ts)) ) : ( abs(time_to_double(t_co$a_ts) - time_to_double(ts)) );
 
 			# If there is one value we test and are happy, else we
 			#   dig and suffer
-			if ( |t_ds[ds_index]| == 1 ) {
+			if ( |t_ds$dst_set| == 1 ) {
  
 				# The t_co object just might be there 
-				t_co = t_ds[ds_index];
+				t_co = t_ds$dst_set[ds_index];
 
 				if ( _type == AUDIT_DATA ) {
 					t_co$a_ts = ts;
@@ -178,21 +187,21 @@ function conn_collate(cid: conn_id, identity: string, _type: count, ts: time, no
 				if ( abs(time_to_double(t_co$n_ts) - time_to_double(t_co$a_ts)) <= time_window ) {
 
 					Log::write(LOG, t_co);
-					delete t_ds[ds_index];
+					delete t_ds$dst_set[ds_index];
 
 					}
 				}
 			else {
 				# mmmm, dig dig dig
 				local s: table[string] of conn_obj;
-				s = t_ds[ds_index];
+				s = t_ds$dst_set;
 
 				for ( i in s ) {
 
-					local dt = _type == AUDIT_DATA ? ( abs(s[i]$n_ts - ts) ) : ( abs(s[i]$a_ts - ts) );
+					local dtx = _type == AUDIT_DATA ? ( abs(time_to_double(s[i]$n_ts) - time_to_double(ts)) ) : ( abs(time_to_double(s[i]$a_ts) - time_to_double(ts)) );
 
 					# take first conenction within the time_window frame
-					if ( dt <= time_window ) {
+					if ( dtx <= time_window ) {
 						t_co = s[i];
 
 						if ( _type == AUDIT_DATA ) {
@@ -206,20 +215,17 @@ function conn_collate(cid: conn_id, identity: string, _type: count, ts: time, no
 						Log::write(LOG, s[i]);
 
 						ret_val = s[i]$tie_identity;
-						delete t_ds[ds_index]$s[i];
+						delete t_ds$dst_set[i];
 
 						} # dt < time_window
 					} # END: for i in s
-
-
 				} # END: multi responses 
-
 		} # end index_id in dest_library
 
 	return ret_val;
 	} # end function
 
-
+} # ?!?!?!?!
 ### ----- # ----- ###
 #      Events
 ### ----- # ----- ###
