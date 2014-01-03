@@ -11,6 +11,7 @@
 #   ses and pid values since the internal systems should remove duplicate values.
 #
 @load auditd_policy/util
+@load auditd_policy/auditd_net
 
 module AUDITD_POLICY;
 
@@ -60,7 +61,7 @@ export {
 	## Execution configuration ##
 
 	# blacklist of directories which 
-	global exec_blacklist = /^\/dev/ | /^\/var/run/ &redef;
+	global exec_blacklist = /^\/dev/ | /^\/var\/run/ &redef;
 	global exec_blacklist_test = T &redef;
 	
 	# identiy related configs
@@ -134,7 +135,7 @@ function process_identity(inf: Info) : count
 	local old_id =  identityState[id_index];
 
 	# In this case the record is either new or corrupt.
-	if ( inf$i$uid == NULL_ID )
+	if ( inf$i$idv[v_uid] == NULL_ID )
 		return ret_val;
 
 	# Now loop through the various identities, looking for changes
@@ -142,13 +143,13 @@ function process_identity(inf: Info) : count
 
 		# Compare older (looked up) value, against the newer
 		#  one taken from the presented Info object
-		if ( old_id$idv[i] != inf$idv[i] ) {
+		if ( old_id$idv[i] != inf$i$idv[i] ) {
 			# A change has been detected ...
 			# Check the identities against whitelist candidates for
 			#  user and group transitions and report back the change.
 			# At this point we need to evaluate just *what* it was that 
 			#  forced the tansition, so just report back change.
-			if ( (inf$idv[i] in whitelist_to_id) || (old_id$idv[i] in whitelist_from_id) ) {
+			if ( (inf$i$idv[i] in whitelist_to_id) || (old_id$idv[i] in whitelist_from_id) ) {
 
 				# do nothing
 				}
@@ -175,11 +176,11 @@ function syscall_socket(inf: Info) : count
 	# If the policy is set to only look at TCP connections
 	#  return with 0
 	#
-	if ( filter_tcp_only && ( (inf$a0 != AF_INET) || (inf$a1 != SOCK_STREAM)))
-		return ret_val;
+	#if ( AUDITD_NET::filter_tcp_only && ( (inf$a0 != AF_INET) || (inf$a1 != SOCK_STREAM)))
+	#	return ret_val;
 
-	t_socket_data$domain = inf$a0;
-	t_socket_data$s_type = inf$a1;
+	t_socket_data$domain = to_count(inf$a0);
+	t_socket_data$s_type = to_count(inf$a1);
 	t_socket_data$ts = inf$ts;
 	t_socket_data$state = 1;
 	
@@ -281,7 +282,7 @@ function network_register_listener(i: Info) : count
 	local t_socket_data: socket_data;
 	local cid: conn_id;
 
-	local index = fmt("%s%s", inf$ses, inf$node);
+	local index = fmt("%s%s", i$ses, i$node);
 
 	if ( index in socket_lookup )
 		t_socket_data = socket_lookup[index];
@@ -292,7 +293,7 @@ function network_register_listener(i: Info) : count
 	if ( t_socket_data$domain != AF_INET )
 		return ret_val;
 
-	if ( (t_socket_data$o_addr_info == "NULL") || (t_socket_data$o_port_data == "NULL"))
+	if ( (t_socket_data$o_addr_info == "NULL") || (t_socket_data$o_port_info == "NULL"))
 		return ret_val;
 
 	ret_val = 1;
@@ -311,27 +312,27 @@ function network_register_listener(i: Info) : count
 
 	# test and create the port sets
 	# orig ports
-	cid$orig_p = s_port( fmt("%s/%s", t_socket_data$o_port_info, ptype);
+	cid$orig_p = s_port( fmt("%s/%s", t_socket_data$o_port_info, ptype));
 
 	# resp ports
 	if ( t_socket_data$r_port_info != "NULL" )
-		cid$resp_p = s_port( fmt("%s/%s", t_socket_data$r_port_info, ptype);
+		cid$resp_p = s_port( fmt("%s/%s", t_socket_data$r_port_info, ptype));
 	else
-		cid$resp_p = s_port( fmt("0/%s", ptype);
+		cid$resp_p = s_port( fmt("0/%s", ptype));
 
 	# IP Addresses
 	# orig host
 	cid$orig_h = s_addr(t_socket_data$r_addr_info);
 
 	# resp host
-	if ( t_socket_data$r_host_info != "NULL" )
+	if ( t_socket_data$r_addr_info != "NULL" )
 		cid$resp_h = s_addr(t_socket_data$r_addr_info);
 	else
 		cid$resp_h = s_addr("0.0.0.0");
 
 	# having built a prototype connection id, register it with the 
 	#  new socket systems policy
-	SYSTEMS_DATA::new_socket(i,cid);
+	#SYSTEMS_DATA::new_socket(i,cid);
 
 	return ret_val;
 	}
@@ -349,10 +350,10 @@ function network_register_conn(i: Info) : count
 
 	# For the time being we focus on succesful connect() syscalls - in
 	#  this event the "error" code will be 0.
-	if ( i$ext != 0 )
+	if ( to_int(i$ext) != 0 )
 		return ret_val;	
 
-	local index = fmt("%s%s", inf$ses, inf$node);
+	local index = fmt("%s%s", i$ses, i$node);
 
 	if ( index in socket_lookup )
 		t_socket_data = socket_lookup[index];
@@ -363,7 +364,7 @@ function network_register_conn(i: Info) : count
 	if ( t_socket_data$domain != AF_INET )
 		return ret_val;
 
-	if ( (t_socket_data$r_addr_info == "NULL") || (t_socket_data$r_port_data == "NULL"))
+	if ( (t_socket_data$r_addr_info == "NULL") || (t_socket_data$r_port_info == "NULL"))
 		return ret_val;
 
 	ret_val = 1;
@@ -379,20 +380,20 @@ function network_register_conn(i: Info) : count
 
 	# test and create the port sets
 	# resp ports
-	cid$resp_p = s_port( fmt("%s/%s", t_socket_data$r_port_info, ptype);
+	cid$resp_p = s_port( fmt("%s/%s", t_socket_data$r_port_info, ptype));
 
 	# orig ports
 	if ( t_socket_data$o_port_info != "NULL" )
-		cid$orig_p = s_port( fmt("%s/%s", t_socket_data$o_port_info, ptype);
+		cid$orig_p = s_port( fmt("%s/%s", t_socket_data$o_port_info, ptype));
 	else
-		cid$orig_p = s_port( fmt("0/%s", ptype);
+		cid$orig_p = s_port( fmt("0/%s", ptype));
 
 	# IP Addresses
 	# resp host
 	cid$resp_h = s_addr(t_socket_data$r_addr_info);
 
 	# orig host
-	if ( t_socket_data$o_host_info != "NULL" )
+	if ( t_socket_data$r_addr_info != "NULL" )
 		cid$resp_h = s_addr(t_socket_data$r_addr_info);
 	else
 		cid$resp_h = s_addr("0.0.0.0");
@@ -417,7 +418,7 @@ function exec_pathcheck(exec_path: string) : count
 	if ( exec_blacklist in exec_path ) {
 		
 		#print fmt("EXECBLACKLIST: %s", exec_path);
-		NOTICE([$note=Auditd_ExecPathcheck,
+		NOTICE([$note=AUDITD_ExecPathcheck,
 			$msg=fmt("Exec path on blacklist: %s", exec_path)]);
 
 		ret_val = 1;
@@ -432,7 +433,7 @@ function exec_history(inf: Info) : count
 	#  to look into in the event of a permission transition
 	#
 	local ret_val = 0;
-	local id = inf$i$auid;
+	local id = inf$i$idv[v_auid];
 	local t_hrec: history_rec;
 
 	if ( id !in execution_history ) {
@@ -469,8 +470,11 @@ function exec_wrapper(inf: Info) : count
 	# track id drift.  start by just detecting it, then begin building
 	#  whitelists and implement
 	if ( identity_drift_test ) {
-		if (process_identity(inf) != 0 )
-			process_exec_transiton(inf);
+		if (process_identity(inf) != 0 ) {
+			# something changed ..
+
+			}
+			
 		}
 
 	return ret_val;
@@ -482,22 +486,22 @@ function exec_wrapper(inf: Info) : count
 
 # This event currently in holding - might not need it
 
-event syscall_flush(ts: time, index: string)
+event syscall_flush(index: string)
 	{
 	local t_socket_data: socket_data;
-	local td = time_to_double(network_time();
+	local td = time_to_double(network_time());
 
 	if ( index in socket_lookup ) {
 		# look up the current socket_data struct and if it is 
 		#  not been touched, remove it.
 		t_socket_data = socket_lookup[index];
 
-		if ( td - time_to_double(t$socket_data$ts) > 20 )
+		if ( (td - time_to_double(t_socket_data$ts)) > 20 )
 			delete socket_lookup[index];
 		else
 			# the timestamp on the socket_data struct has been moved since creation
 			#  time.  schedule a re-check 
-			schedule syscall_flush_interval syscall_flush(index);
+			schedule syscall_flush_interval { syscall_flush(index) };
 		}
 
 	return;
@@ -543,7 +547,7 @@ event auditd_policy_dispatcher(inf: Info)
 				break;
 			case "listen":		# listen for connections on a socket (S)
 				syscall_listen(inf);
-				network_log_listener(inf);
+				network_register_listener(inf);
 				break;
 			case "socket":		# create an endpoint for communication (C/S)
 				syscall_socket(inf);
