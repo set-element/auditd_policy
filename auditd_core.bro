@@ -39,7 +39,7 @@ export {
 	global copy_identity: function(index: string, node: string) : Info;
 
 	global update_action: function(i: Info);
-	global build_identity: function(auid: string, uid: string, gid: string, euid: string, egid: string, fsuid: string, fsgid: string, suid: string, sgid: string) : vector or string;
+	global build_identity: function(auid: string, uid: string, gid: string, euid: string, egid: string, fsuid: string, fsgid: string, suid: string, sgid: string) : vector of string;
 	global update_identity: function(ses: int, node: string, tvid: vector of string) : count;
 
 	global delete_action: function(index: string, node: string);
@@ -265,7 +265,7 @@ function update_identity(ses: int, node: string, tvid: vector of string) : count
 		t_identity$node = node;
 	
 	# move through identity vector
-	for ( i in tid ) {
+	for ( i in tvid ) {
 		t_identity$idv[i] = tvid[i];
 		}
 
@@ -567,7 +567,7 @@ event auditd_syscall(index: string, action: string, ts: time, node: string, ses:
 		t_Info$ext = ext;
 
 	# identification
-	local tvid = build_identity(ses, node, auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
+	local tvid = build_identity( auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
 	update_identity(ses, node, tvid);
 
 	update_action(t_Info);
@@ -626,7 +626,7 @@ event auditd_user(index: string, action: string, ts: time, node: string, ses: in
 
 	# identification
 	local tvid = build_identity(auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
-	update_identity(ses, node, auid, tvid);
+	update_identity(ses, node, tvid);
 
 	update_action(t_Info);
 
