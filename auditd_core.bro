@@ -11,7 +11,7 @@
 #   ses and pid values since the internal systems should remove duplicate values.
 #
 @load auditd_policy/util
-@load auditd_policy/auditd_policy.bro
+#@load auditd_policy/auditd_policy
 
 module AUDITD_CORE;
 
@@ -22,13 +22,67 @@ export {
 
 	const ID_DEFAULT = "-1";
 	const INFO_NULL  = "NULL";
-
 	const zero_int: int = 0;	
+	global index_match: pattern = /^[0-9]{1,10}:[0-9]{1,3}:[0-9]{1,3}$/;
+
+        type identity: record {
+                ses:       int &log &default=-1;                # numeric session id or 'unset'
+                node:   string &log &default="NULL";            # what host is this happening on
+                idv: vector of string &log;
+                };
+
+        # Track action characteristics - this is defined as the aggrigate characteristics of
+        #  an individual auditable event not defined in the identity object.  This is the description
+        #  of what happened rather than who did it.
+        #                   
+	type Info: record {
+		## -- indexing information --
+                ts:        time   &log;                         #
+                i:         identity &log;                       # identity structure defined above
+                index:     string &log &default=INFO_NULL;      # identifier provided by key in getid()
+                node:      string &log &default=INFO_NULL;      # what host is this happening on
+                pid:       int    &log &default=-1;             # curent pid
+                ses:       int    &log &default=-1;             # numeric session id or 'unset'
+
+		## -- class info --
+                action:    string &log &default=INFO_NULL;      # class of action (ex: 'SYSCALL_OBJ'), also ERROR_FLAG
+                key:       string &log &default=INFO_NULL;      # subtype of class (ex: 'SYS_NET')
+
+		## -- what happened --
+                syscall:   string &log &default=INFO_NULL;      # syscall name
+                comm:      string &log &default=INFO_NULL;      # name as appears in 'ps'
+                exe:       string &log &default=INFO_NULL;      # full exe name + path
+
+		## -- details --
+                msg:       string &log &default=INFO_NULL;
+                s_type:    string &log &default=INFO_NULL;      # name or file type socket
+                s_host:    string &log &default=INFO_NULL;      # *where* the socket type is pointing
+                s_serv:    string &log &default=INFO_NULL;      # service it is pointing to
+                path_name: string &log &default=INFO_NULL;      # gen 1x per path element passed to syscall
+                cwd:       string &log &default=INFO_NULL;      # current working direct at time of syscall
+                a0:        string &log &default=INFO_NULL;      # argument0 to syscall
+                a1:        string &log &default=INFO_NULL;      # ..
+                a2:        string &log &default=INFO_NULL;      # ..
+                arg_t:     string &log &default=INFO_NULL;      # for exec, *total* set of args
+                ppid:      int    &log &default=-1;             # parent pid
+                tty:       string &log &default=INFO_NULL;      # tty type or NO_TTY
+                terminal:  string &log &default=INFO_NULL;      # terminal data or NO_TERM
+                success:   string &log &default=INFO_NULL;      # if syscall succedded or not
+                ext:       string &log &default=INFO_NULL;      # exit code for call
+                ouid:      string &log &default=INFO_NULL;      # uid on file system inode
+                ogid:      string &log &default=INFO_NULL;      # gid on file system inode
+                };
 
 	# to map identity <=> action use sid:node as "identity-id"
 	# to map action-id and record[n] use index:node as "action-id"
+	# main state table: driven by *key*
+	#
+	global actionState: table[string] of Info;
+	global identityState: table[string] of identity;
 
-	# exported functions
+	global action_delete_delay = 5 sec &redef;
+
+	# exported functions and events
 	global get_action_id: function(index: string, node: string) : string;
 	global get_identity_id: function(ses: int, node: string) : string;
 
@@ -42,6 +96,7 @@ export {
 	global build_identity: function(auid: string, uid: string, gid: string, euid: string, egid: string, fsuid: string, fsgid: string, suid: string, sgid: string) : vector of string;
 	global update_identity: function(ses: int, node: string, tvid: vector of string) : count;
 
+	global delete_item: event(key: string);
 	global delete_action: function(index: string, node: string);
 	global string_test: function(s: string) : bool;
 	global int_test: function(i: int) : bool;
@@ -69,10 +124,8 @@ function get_action_id(index: string, node: string) : string
 
 	# weed out corrupt data
 	if ( |i| == 3 ) {
-
 		local i_major = to_count(i[1]);
 		ret = fmt("%s%s", i_major, node);
-
 		}
 
 	return ret;
@@ -137,11 +190,20 @@ function last_record(index: string): count
 	#  3:2:2 means index:total_records:record_index
 	# so in this case the result would be true
 	#
+	# /^[0-9]{1,10}:[0-9]{1,3}:[0-9]{1,3}$/
 	local ret = 0;
-	local index_split = split(index, /:/);
 
-	if ( index_split[2] == index_split[3] )
-		ret = 1;
+	local mpr = match_pattern(index, index_match);
+
+	if ( mpr$matched ) {
+		local index_split = split(index, /:/);
+
+		if ( index_split[2] == index_split[3] )
+			ret = 1;
+		}
+	else
+		print fmt("INDEX pattern match for: %s", index);
+
 	return ret;
 }
 
@@ -151,7 +213,6 @@ function update_action(i: Info)
 	local key = get_action_id(i$index,i$node);
 	# update the record value
 	if ( key in actionState ) {
-
 		actionState[key] = i;
 		}
 	else {
@@ -166,7 +227,6 @@ function copy_identity(index: string, node: string) : Info
 	local t_identity = get_identity_obj(t_Info$ses, t_Info$node);
 
 	t_Info$i = t_identity;
-
 	return t_Info;
 }
 
@@ -190,7 +250,7 @@ function delete_action(index: string, node: string)
 	local key = get_action_id(index,node);
 
 	if ( key in actionState )
-		delete actionState[key];
+		schedule action_delete_delay { delete_item(key) };
 }
 
 function string_test(s: string) : bool
@@ -238,9 +298,14 @@ function build_identity(auid: string, uid: string, gid: string, euid: string, eg
 	# simple function to take the big blob of text identities and put them into a more
 	#  useful form for consumption by other heuristics.
 	# 
-	local t_identity: vector of string = vector(auid, uid, gid, euid, egid, suid, sgid, fsuid, fsgid);
+	local t_idv: vector of string = vector(auid, uid, gid, euid, egid, suid, sgid, fsuid, fsgid);
+	#local t_identity: identity;
 
-	return t_identity;
+	#t_identity$ses = ses;
+	#t_identity$node = node;
+	#t_identity$idv = t_idv;
+
+	return t_idv;
 }
 
 function update_identity(ses: int, node: string, tvid: vector of string) : count
@@ -278,6 +343,16 @@ function update_identity(ses: int, node: string, tvid: vector of string) : count
 ### ----- # ----- ###
 #      Events
 ### ----- # ----- ###
+
+event delete_item(key: string)
+{
+	# This is used to do the actual removing of records from the 
+	#   actionState table
+	#
+	if ( key in actionState )
+		delete actionState[key];
+}
+
 event auditd_execve(index: string, action: string, ts: time, node: string, ses: int, pid: int, argc: int, argument: string)
 	{
 	# Beta event
@@ -305,10 +380,6 @@ event auditd_execve(index: string, action: string, ts: time, node: string, ses: 
 
 	# if the last record, print it and clean up the action state
 	if ( last_record(index) == 1 ) {
-@ifdef ( AUDITD_CORE::AUDITD_POLICY_LOAD )
-		local i = copy_identity(index,node);
-		event AUDITD_POLICY::auditd_policy_dispatcher(i);
-@endif
 		t_Info = sync_identity(index,node);
 		Log::write(LOG, t_Info);
 		delete_action(index,node);
@@ -373,17 +444,13 @@ event auditd_generic(index: string, action: string, ts: time, node: string, ses:
 		t_Info$ext = ext;
 
 	# identification
-	local tvid = build_identity( auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
-	update_identity(ses, node, tvid);
+	local t_id = build_identity(auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
+	update_identity(ses,node,t_id);
 
 	update_action(t_Info);
 
 	# if the last record, print it
 	if ( last_record(index) == 1 ) {
-@ifdef ( AUDITD_POLICY::AUDITD_POLICY_LOAD )
-		#auditd_policy_dispatcher(copy_identity(index,node));
-		event AUDITD_POLICY::auditd_policy_dispatcher(copy_identity(index,node));
-@endif
 		t_Info = sync_identity(index,node);
 		Log::write(LOG, t_Info);
 		delete_action(index,node);
@@ -419,10 +486,6 @@ event auditd_place(index: string, action: string, ts: time, node: string, ses: i
 
 	# if the last record, print it
 	if ( last_record(index) == 1 ) {
-@ifdef ( AUDITD_POLICY::AUDITD_POLICY_LOAD )
-		#auditd_policy_dispatcher(copy_identity(index,node));
-		event AUDITD_POLICY::auditd_policy_dispatcher(copy_identity(index,node));
-@endif
 		t_Info = sync_identity(index,node);
 		Log::write(LOG, t_Info);
 		delete_action(index,node);
@@ -499,10 +562,6 @@ event auditd_saddr(index: string, action: string, ts: time, node: string, ses: i
 
 	# if the last record, print it
 	if ( last_record(index) == 1 ) {
-@ifdef ( AUDITD_POLICY::AUDITD_POLICY_LOAD )
-		#auditd_policy_dispatcher(copy_identity(index,node));
-		event AUDITD_POLICY::auditd_policy_dispatcher(copy_identity(index,node));
-@endif
 		t_Info = sync_identity(index,node);
 		Log::write(LOG, t_Info);
 		delete_action(index,node);
@@ -567,17 +626,13 @@ event auditd_syscall(index: string, action: string, ts: time, node: string, ses:
 		t_Info$ext = ext;
 
 	# identification
-	local tvid = build_identity( auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
-	update_identity(ses, node, tvid);
-
+	local t_id = build_identity(auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
+	update_identity(ses,node,t_id);
+	
 	update_action(t_Info);
 
 	# if the last record, print it
 	if ( last_record(index) == 1 ) {
-@ifdef ( AUDITD_POLICY::AUDITD_POLICY_LOAD )
-		#auditd_policy_dispatcher(copy_identity(index,node));
-		event AUDITD_POLICY::auditd_policy_dispatcher(copy_identity(index,node));
-@endif
 		t_Info = sync_identity(index,node);
 		Log::write(LOG, t_Info);
 		delete_action(index,node);
@@ -625,16 +680,13 @@ event auditd_user(index: string, action: string, ts: time, node: string, ses: in
 		t_Info$ext = ext;
 
 	# identification
-	local tvid = build_identity(auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
-	update_identity(ses, node, tvid);
+	local t_id = build_identity(auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
+	update_identity(ses,node,t_id);
 
 	update_action(t_Info);
 
 	# if the last record, print it
 	if ( last_record(index) == 1 ) {
-
-		event AUDITD_POLICY::auditd_policy_dispatcher(copy_identity(index,node));
-
 		t_Info = sync_identity(index,node);
 		Log::write(LOG, t_Info);
 		delete_action(index,node);
