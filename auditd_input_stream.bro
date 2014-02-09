@@ -26,7 +26,8 @@ export {
 		d: string;
 	};
 
-	const data_file = "/tmp/df.log" &redef;
+	const data_file = "/home/bro/logs/RAW/AUDIT_DATA_0" &redef;
+	#const data_file = "/tmp/ad" &redef;
 	const DATANODE = F &redef;
 
 	const dispatcher: table[string] of function(_data: string): count &redef;
@@ -37,6 +38,11 @@ function execve_f(data: string) : count
 	# data format:
 	# 1492:2 EXECVE_OBJ EXECVE 1357649135.905 3 %20/bin/csh%20-f%20/usr/common/usg/bin/nersc_host
 	local parts = split(data, kv_splitter);
+
+	if ( |parts| < 9 ) {
+		print fmt("execve_f parse error for %s", data);
+		return 1;
+		}
 
 	local index = s_string( parts[1] );	# form a:b, a=action count, b=which record in action
 	local flavor = s_string( parts[2] );	# base object type
@@ -60,6 +66,11 @@ function generic_f(data: string) : count
 	# 65465:2 GENERIC_OBJ FD_PAIR 1357648201.328 mndlint01 0 NULL NULL NULL NULL NULL NULL -1 -1 -1 -1 -1 -1
 	# -1 -1 -1 -1 NULL NULL NULL 0
 	local parts = split(data, kv_splitter);
+
+	if ( |parts| < 27 ) {
+		print fmt("generic_f parse error for %s", data);
+		return 1;
+		}
 
 	local index = s_string( parts[1] );	# form a:b, a=action count, b=which record in action
 	local flavor = s_string( parts[2] );	# base object type
@@ -102,6 +113,10 @@ function place_f(data: string) : count
 	#                       6ITCyp 252651183 0100600 unknown(65534) unknown(65533)
 	local parts = split(data, kv_splitter);
 
+	if ( |parts| < 13 ) {
+		print fmt("place_f parse error for %s", data);
+		return 1;
+		}
 	local index = s_string( parts[1] );	# form a:b, a=action count, b=which record in action
 	local flavor = s_string( parts[2] );	# base object type
 	local action = s_string( parts[3] );	# the thing that happens, also called 'event' in traditional auditd docs
@@ -127,6 +142,10 @@ function saddr_f(data: string) : count
 	# 24142:2 SADDR_OBJ SOCKADDR 1357648977.688 inet%20host%3A208.45.140.197%20serv%3A80
 	local parts = split(data, kv_splitter);
 
+	if ( |parts| < 8 ) {
+		print fmt("saddr_f parse error for %s", data);
+		return 1;
+		}
 	local index = s_string( parts[1] );	# form a:b, a=action count, b=which record in action
 	local flavor = s_string( parts[2] );	# base object type
 	local action = s_string( parts[3] );	# the thing that happens, also called 'event' in traditional auditd docs
@@ -147,6 +166,10 @@ function syscall_f(data: string) : count
 	#                           1570 1a4 8000 root root root root root root root root 19220 19206 NO_TTY chmod yes 0
 	local parts = split(data, kv_splitter);
 
+	if ( |parts| < 27 ) {
+		print fmt("syscall_f parse error for %s", data);
+		return 1;
+		}
 	local index = s_string( parts[1] );	# form a:b, a=action count, b=which record in action
 	local flavor = s_string( parts[2] );	# base object type
 	local action = s_string( parts[3] );	# the thing that happens, also called 'event' in traditional auditd docs
@@ -178,7 +201,6 @@ function syscall_f(data: string) : count
 	local ext = s_string( parts[27] );
 
 	event auditd_syscall(index$data, action$data, ts$data, node$data, ses, pid, auid$data, syscall$data, key$data, comm$data, exe$data, a0$data, a1$data, a2$data, uid$data, gid$data, euid$data, egid$data, fsuid$data, fsgid$data, suid$data, sgid$data, ppid, tty$data, success$data, ext$data);
-	#event auditd_syscall(index, action, ts, node, ses, pid, auid, syscall, key, comm, exe, a0, a1, a2, uid, gid, euid, egid, fsuid, fsgid, suid, sgid, ppid, tty, terminal, success, ext);
 	return 0;
 	}
 
@@ -188,6 +210,10 @@ function user_f(data: string) : count
 	#                           /pts/1 /bin/su
 	local parts = split(data, kv_splitter);
 
+	if ( |parts| < 20 ) {
+		print fmt("user_f parse error for %s", data);
+		return 1;
+		}
 	local index = s_string( parts[1] );	# form a:b, a=action count, b=which record in action
 	local flavor = s_string( parts[2] );	# base object type
 	local action = s_string( parts[3] );	# the thing that happens, also called 'event' in traditional auditd docs
@@ -209,7 +235,8 @@ function user_f(data: string) : count
 	local ext = s_string( parts[18] );
 	local terminal = s_string( parts[19] );
 	local exe = s_string( parts[20] );
-	local msg = s_string( parts[21] );
+	#local msg = s_string( parts[21] );
+	local msg = s_string("NODATA");
 
 	event auditd_user(index$data, action$data, ts$data, node$data, ses, pid, auid$data, euid$data, egid$data, fsuid$data, fsgid$data, suid$data, sgid$data, uid$data, gid$data, exe$data, terminal$data, success$data, ext$data, msg$data);
 	return 0;
@@ -235,13 +262,19 @@ event line(description: Input::EventDescription, tpe: Input::Event, LV: lineVals
 	# Each of the general types has a given structure, and the index ties all
 	#  related 
 	local parts = split(LV$d, kv_splitter);
-	local event_name = parts[2];
 
-	if ( event_name in dispatcher ) 
-		dispatcher[event_name](LV$d);
-	}	
+	local event_name = "NULL";
 
+	# the event line needs to have a minimum number of space delimited fields
+	#   if they are not here, skip the line
+	if ( |parts| > 7 ) {
+		event_name = parts[2];
 
+		if ( event_name in dispatcher ) 
+			dispatcher[event_name](LV$d);
+		}
+
+	}
 
 
 event init_datastream()
