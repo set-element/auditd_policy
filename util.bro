@@ -8,12 +8,8 @@
 	### --- ## --- ###
 	# Data structs and constants
 	### --- ## --- ###
-
-	const ID_DEFAULT = "-1";
 	const INFO_NULL  = "NULL";
 
-	const zero_int: int = 0;
-	
 	# Make bookeepng easier - note vector counting starts at zero!
 
 	## -- identity info (process) --
@@ -28,77 +24,12 @@
 	const v_fsuid = 7;	# file system user id
 	const v_fsgid = 8;	# file system group id
 
-	# Used to keep track of the assigned *id/*gid values for a per host session identity.
-	#   This is the description of the who in an auditable event.  It needs to be stored
-	#   separately from the Info record since it lives for the entire duration of the session
-	#   rather than the individual event.
-	#
-	# It is logged as a component of the Info record, and updated at a:b:1 for the primary
-	#   / alpha record.
-	#
-
-	# To better facilitate the handling of the identity information, we break it out into
-	#  a vector which makes dealing with it *much* simpler.
-	
-	type identity: record {
-		ses:       int &log &default=-1;       	        # numeric session id or 'unset'
-		node:   string &log &default="NULL";            # what host is this happening on
-		idv: vector of string;
-		};
-	
-
-	# Track action characteristics - this is defined as the aggrigate characteristics of
-	#   an individual auditable event not defined in the identity object.  This is the description
-	#   of what happened rather than who did it.
-	#
-	type Info: record {
-		## -- indexing information --
-		ts:        time   &log;				#
-		i:         identity &log;			# identity structure defined above
-		index:     string &log &default=INFO_NULL;	# identifier provided by key in getid()
-		node:      string &log &default=INFO_NULL;	# what host is this happening on
-		pid:       int    &log &default=-1;		# curent pid
-		ses:       int    &log &default=-1;		# numeric session id or 'unset'
-
-		## -- class info --
-		action:    string &log &default=INFO_NULL;	# class of action (ex: 'SYSCALL_OBJ'), also ERROR_FLAG
-		key:       string &log &default=INFO_NULL;	# subtype of class (ex: 'SYS_NET')
-
-		## -- what happened --
-		syscall:   string &log &default=INFO_NULL;	# syscall name
-		comm:      string &log &default=INFO_NULL;	# name as appears in 'ps'
-		exe:       string &log &default=INFO_NULL;	# full exe name + path
-
-		## -- details --
-		msg:       string &log &default=INFO_NULL;
-		s_type:    string &log &default=INFO_NULL;	# name or file type socket
-		s_host:    string &log &default=INFO_NULL;	# *where* the socket type is pointing
-		s_serv:    string &log &default=INFO_NULL;	# service it is pointing to
-		path_name: string &log &default=INFO_NULL;	# gen 1x per path element passed to syscall
-		cwd:       string &log &default=INFO_NULL;	# current working direct at time of syscall
-		a0:        string &log &default=INFO_NULL;	# argument0 to syscall
-		a1:        string &log &default=INFO_NULL;	# ..
-		a2:        string &log &default=INFO_NULL;	# ..
-		arg_t:     string &log &default=INFO_NULL;	# for exec, *total* set of args
-		ppid:      int    &log &default=-1; 		# parent pid
-		tty:       string &log &default=INFO_NULL; 	# tty type or NO_TTY
-		terminal:  string &log &default=INFO_NULL; 	# terminal data or NO_TERM
-		success:   string &log &default=INFO_NULL;	# if syscall succedded or not 
-		ext:       string &log &default=INFO_NULL;	# exit code for call
-		ouid:      string &log &default=INFO_NULL;	# uid on file system inode
-		ogid:      string &log &default=INFO_NULL;	# gid on file system inode
-		};
-
-	# main state table: driven by *key*
-	global actionState: table[string] of Info;
-	global identityState: table[string] of identity;	
-
-	### --- ## --- ###
 	# End of data structs
 
 	## regx to test data types
 	global kv_splitter: pattern = / / &redef;
 	global count_match: pattern = /^[0-9]{1,16}$/;
+	global int_match: pattern = /^[\-]{0,1}[0-9]{1,16}$/;
 	global port_match: pattern  = /^[0-9]{1,5}\/(tcp|udp|icmp)$/;
 	global time_match: pattern  = /^[0-9]{9,10}.[0-9]{0,6}$/;
 	global ip_match: pattern    = /((\d{1,2})|(1\d{2})|(2[0-4]\d)|(25[0-5]))/;
@@ -139,25 +70,6 @@
 	const SOCK_DGRAM: count  = 2;	# datagram socket
 	const SOCK_RAW: count    = 3;	# raw-protocol interface
 	#
-	
-	type socket_data: record {
-		domain: count &default=0;		# UNIX/INET
-		s_type: count &default=0;		# STREAM/DGRAM
-		ts: time;				# start time
-		o_addr_info: string &default="NULL";	# 
-		o_port_info: string &default="NULL";	# 
-		r_addr_info: string &default="NULL";	# 
-		r_port_info: string &default="NULL";	# 
-		state: count &default=0;		# see below:
-		};
-
-	#		 Note on socket state:
-	# 			0 = new
-	#			1 = init
-	#			2 = conn	 -> make connection 
-	#			3 = bind|listen  -> create listener
-	#			4 = accept 	 -> listener connect
-	# 
 	### --- END SOCKET --- ###
 
 	#
@@ -285,7 +197,13 @@ function s_int(s: string) : int
 	{
 	local ret_val:int = INT_CONV_ERROR;
 
-	ret_val = to_int(s);
+	local i_pm = match_pattern( s, int_match );
+
+	if ( i_pm$matched )
+		ret_val = to_int(s);
+	else
+		print fmt("INT PATTERN ERROR: %s", s);
+
 	return ret_val;
 	}
 
