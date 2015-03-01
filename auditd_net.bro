@@ -57,7 +57,7 @@ export {
 
 	### ----- Event/Functions ----- ###
 	# Value from audit side
-	global audit_conn_register: function(cid: conn_id, inf: Info) : count;
+	global audit_conn_register: function(cid: conn_id, inf: AUDITD_CORE::Info) : count;
 	# Value from net side
 	global net_conn_register: function(id: conn_id, ts: time, uid: string) : count;
 	global conn_collate: function(cid: conn_id, identity: string, _type: count, ts: time, node: string) : string;
@@ -76,7 +76,7 @@ function abs(d: double) : double
 	return sqrt(d*d);
 	}
 
-function audit_conn_register(cid: conn_id, inf: Info) : count
+function audit_conn_register(cid: conn_id, inf: AUDITD_CORE::Info) : count
 	{
 	local ret_val = 0;
 	conn_collate(cid, inf$i$idv[v_auid], AUDIT_DATA, inf$ts, inf$i$node); 
@@ -231,6 +231,6 @@ function conn_collate(cid: conn_id, identity: string, _type: count, ts: time, no
 ### ----- # ----- ###
 event bro_init() &priority = 5
 {
-	  Log::create_stream(AUDITD_NET::LOG, [$columns=Info]);
+	  Log::create_stream(AUDITD_NET::LOG, [$columns=AUDITD_CORE::Info]);
 }
 
