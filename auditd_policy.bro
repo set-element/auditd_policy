@@ -11,9 +11,11 @@
 #   ses and pid values since the internal systems should remove duplicate values.
 #
 @load auditd_policy/util
-@load auditd_policy/auditd_net
+@load auditd_policy/auditd_core
+#@load auditd_policy/auditd_net
 
 module AUDITD_POLICY;
+#module AUDITD_CORE;
 
 export {
 
@@ -25,6 +27,25 @@ export {
 
 	# tag for file loaded
 	const AUDITD_POLICY_LOAD = T;
+
+        type socket_data: record {
+                domain: string &default="NULL";         # UNIX/INET
+                s_type: string &default="NULL";         # STREAM/DGRAM
+                ts: time &default=double_to_time(0.000);# start time
+                o_addr_info: string &default="NULL";    #
+                o_port_info: string &default="NULL";    #
+                r_addr_info: string &default="NULL";    #
+                r_port_info: string &default="NULL";    #
+                state: count &default=0;                # see below:
+                };
+
+        #     Note on socket state:
+        #          0 = new
+        #          1 = init
+        #          2 = conn         -> make connection
+        #          3 = bind|listen  -> create listener
+        #          4 = accept       -> listener connect
+        #    
 
 	# List of identities which are consitered ok to be seen translating
 	#  between one another.
@@ -44,9 +65,9 @@ export {
 	global socket_lookup: table[string] of socket_data &write_expire=syscall_flush_interval;
 
 	# this tracks rolling execution history of user and is
-	#   keyed on the longer lived identity Info$i$auid value.
+	#   keyed on the longer lived identity AUDITD_CORE::Info$i$auid value.
 	type history_rec: record {
-		exec_hist:	table[count] of string;
+		exec_hist:	vector of string;
 		exec_count:	count &default = 0;
 		};
 
@@ -55,8 +76,15 @@ export {
 
 	## -- ##
 
-	global auditd_policy_dispatcher: event(i: Info);
+	global auditd_policy_dispatcher: event(i: AUDITD_CORE::Info);
 	global s: event(s: string);
+
+	global auditd_execve: function(i: AUDITD_CORE::Info);
+	global auditd_generic: function(i: AUDITD_CORE::Info);
+	global auditd_place: function(i: AUDITD_CORE::Info);
+	global auditd_saddr: function(i: AUDITD_CORE::Info);
+	global auditd_syscall: function(i: AUDITD_CORE::Info);
+	global auditd_user: function(i: AUDITD_CORE::Info);
 
 	## Execution configuration ##
 
@@ -66,7 +94,6 @@ export {
 	
 	# identiy related configs
 	global identity_drift_test = T &redef;
-
 
 	} # end export
 		
@@ -83,18 +110,6 @@ redef net_listen_syscalls += { "bind", "accept", };
 ### ----- # ----- ###
 #      Functions
 ### ----- # ----- ###
-
-function get_identity_id(ses: int, node: string) : string
-{
-	# This function returns the identity-id (huh?!?)
-	local ret = "NULL";
-	
-	if (! ((ses == INT_CONV_ERROR) || (node == STRING_CONV_ERROR)) )
-		ret = fmt("%s%s", ses, node);
-
-	return ret;
-}
-
 
 # This function compares two id values and in the event that
 #  the post value are not whitelisted you get {0,1,2} 
@@ -114,58 +129,16 @@ function identity_atomic(old_id: string, new_id: string): bool
 	return ret_val;
 	}
 
-# Look for a unexpected transformation of the identity subvalues
-#  returning a vector of changes.
-#
-# NOTE: the record provided by identityState[] has *not* yet been synced 
-#  to the current living record, so changes will be reflected in the diff
-#  between the live record and the historical.
-#
-# NOTE2: Since it is not possible to know what is the cause of the transition,
-#  this function only identifies the existance of a non-whitelisted uid.
-#
-function process_identity(inf: Info) : count
-	{
-	# return value is a map of 
-	local ret_val = 0;
-
-	# Tests current set of provided identities against the current archived set
-	#  - pick it up.
-	local id_index =  get_identity_id(inf$i$ses, inf$i$node);
-	local old_id =  identityState[id_index];
-
-	# In this case the record is either new or corrupt.
-	if ( inf$i$idv[v_uid] == NULL_ID )
-		return ret_val;
-
-	# Now loop through the various identities, looking for changes
-	for ( i in old_id$idv ) {
-
-		# Compare older (looked up) value, against the newer
-		#  one taken from the presented Info object
-		if ( old_id$idv[i] != inf$i$idv[i] ) {
-			# A change has been detected ...
-			# Check the identities against whitelist candidates for
-			#  user and group transitions and report back the change.
-			# At this point we need to evaluate just *what* it was that 
-			#  forced the tansition, so just report back change.
-			if ( (inf$i$idv[i] in whitelist_to_id) || (old_id$idv[i] in whitelist_from_id) ) {
-
-				# do nothing
-				}
-			else
-				++ret_val;
-			
-			}
-		} # end for loop
-
-	return ret_val;
-	} # end function
-
 ## Begin network related functions ##
 
-function syscall_socket(inf: Info) : count
+function syscall_socket(inf: AUDITD_CORE::Info) : count
 	{
+	# socket(int domain, int type, int protocol);
+	#  a0: domain: PF_LOCAL/PF_UNIX/PF_INET
+	#  a1: type: SOCK_STREAM/SOCK_DATAGRAM/SOCK_RAW
+	#
+	# This info will have been extracted out in the saddr part of the auditd analysis
+	#
 	# Function test for socket exist.
 	# If none, create; if exist, test dt 
 	local ret_val = 0;
@@ -176,11 +149,13 @@ function syscall_socket(inf: Info) : count
 	# If the policy is set to only look at TCP connections
 	#  return with 0
 	#
-	#if ( AUDITD_NET::filter_tcp_only && ( (inf$a0 != AF_INET) || (inf$a1 != SOCK_STREAM)))
+	#
+	#FIX THIS!
+	#if ( AUDITD_NET::filter_tcp_only && ((inf$a0 != "inet") || ( inf$a1 != "SOCK_STREAM")))
 	#	return ret_val;
 
-	t_socket_data$domain = to_count(inf$a0);
-	t_socket_data$s_type = to_count(inf$a1);
+	t_socket_data$domain = inf$a0;
+	t_socket_data$s_type = inf$a1;
 	t_socket_data$ts = inf$ts;
 	t_socket_data$state = 1;
 	
@@ -199,7 +174,7 @@ function syscall_socket(inf: Info) : count
 	} # syscall_socket end
 
 
-function syscall_bind(inf: Info) : count
+function syscall_bind(inf: AUDITD_CORE::Info) : count
 	{
 	# bind(int socket, const struct sockaddr *address, socklen_t address_len);
 	# From the saddr component, we can get the source IP and port ...
@@ -222,7 +197,7 @@ function syscall_bind(inf: Info) : count
 	} # syscall_bind end
 
 
-function syscall_connect(inf: Info) : count
+function syscall_connect(inf: AUDITD_CORE::Info) : count
 	{
 	# connect(int socket, const struct sockaddr *address, socklen_t address_len);
 	local ret_val = 0;
@@ -245,7 +220,7 @@ function syscall_connect(inf: Info) : count
 	} # syscall_connect end
 
 
-function syscall_listen(inf: Info) : count
+function syscall_listen(inf: AUDITD_CORE::Info) : count
 	{
 	# listen(int socket, int backlog);
 	local ret_val = 0;
@@ -268,7 +243,7 @@ function syscall_listen(inf: Info) : count
 	} # syscall_listen end
 
 
-function network_register_listener(i: Info) : count
+function network_register_listener(i: AUDITD_CORE::Info) : count
 	{
 	# This captures data from the system calls bind() and
 	#  accept() and checks to see if the system in question already
@@ -282,6 +257,8 @@ function network_register_listener(i: Info) : count
 	local t_socket_data: socket_data;
 	local cid: conn_id;
 
+	print fmt("NET REGISTER LISTENER");
+
 	local index = fmt("%s%s", i$ses, i$node);
 
 	if ( index in socket_lookup )
@@ -290,7 +267,7 @@ function network_register_listener(i: Info) : count
 		return ret_val;
 
 	# sanity check the data
-	if ( t_socket_data$domain != AF_INET )
+	if ( t_socket_data$domain != "inet" || t_socket_data$domain != "inet6" )
 		return ret_val;
 
 	if ( (t_socket_data$o_addr_info == "NULL") || (t_socket_data$o_port_info == "NULL"))
@@ -304,7 +281,7 @@ function network_register_listener(i: Info) : count
 	# Build a conn_id and hand it off w/ identity info
 	local ptype = "NULL";
 
-	if ( t_socket_data$s_type == SOCK_STREAM )
+	if ( t_socket_data$s_type == "SOCK_STREAM" )
 		ptype = "tcp";
 	else
 		# assume this for now ...
@@ -312,23 +289,23 @@ function network_register_listener(i: Info) : count
 
 	# test and create the port sets
 	# orig ports
-	cid$orig_p = s_port( fmt("%s/%s", t_socket_data$o_port_info, ptype));
+	cid$orig_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$o_port_info, ptype));
 
 	# resp ports
 	if ( t_socket_data$r_port_info != "NULL" )
-		cid$resp_p = s_port( fmt("%s/%s", t_socket_data$r_port_info, ptype));
+		cid$resp_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$r_port_info, ptype));
 	else
-		cid$resp_p = s_port( fmt("0/%s", ptype));
+		cid$resp_p = AUDITD_CORE::s_port( fmt("0/%s", ptype));
 
 	# IP Addresses
 	# orig host
-	cid$orig_h = s_addr(t_socket_data$r_addr_info);
+	cid$orig_h = AUDITD_CORE::s_addr(t_socket_data$r_addr_info);
 
 	# resp host
 	if ( t_socket_data$r_addr_info != "NULL" )
-		cid$resp_h = s_addr(t_socket_data$r_addr_info);
+		cid$resp_h = AUDITD_CORE::s_addr(t_socket_data$r_addr_info);
 	else
-		cid$resp_h = s_addr("0.0.0.0");
+		cid$resp_h = AUDITD_CORE::s_addr("0.0.0.0");
 
 	# having built a prototype connection id, register it with the 
 	#  new socket systems policy
@@ -338,7 +315,7 @@ function network_register_listener(i: Info) : count
 	}
 
 
-function network_register_conn(i: Info) : count
+function network_register_conn(i: AUDITD_CORE::Info) : count
 	{
 	# This attempts to register outbound network connection data with a central correlator
 	#  in order to link the {user:conn} with the "real" netwok connection as seen by the 
@@ -348,6 +325,7 @@ function network_register_conn(i: Info) : count
 	local t_socket_data: socket_data;
 	local cid: conn_id;
 
+	#print fmt("NET REGISTER CONN");
 	# For the time being we focus on succesful connect() syscalls - in
 	#  this event the "error" code will be 0.
 	if ( to_int(i$ext) != 0 )
@@ -361,7 +339,7 @@ function network_register_conn(i: Info) : count
 		return ret_val;
 
 	# sanity check the data
-	if ( t_socket_data$domain != AF_INET )
+	if ( t_socket_data$domain != "inet" || t_socket_data$domain != "inet6" )
 		return ret_val;
 
 	if ( (t_socket_data$r_addr_info == "NULL") || (t_socket_data$r_port_info == "NULL"))
@@ -372,7 +350,7 @@ function network_register_conn(i: Info) : count
 	# Build a conn_id and hand it off w/ identity info
 	local ptype = "NULL";
 
-	if ( t_socket_data$s_type == SOCK_STREAM )
+	if ( t_socket_data$s_type == "SOCK_STREAM" )
 		ptype = "tcp";
 	else
 		# assume this for now ...
@@ -380,31 +358,128 @@ function network_register_conn(i: Info) : count
 
 	# test and create the port sets
 	# resp ports
-	cid$resp_p = s_port( fmt("%s/%s", t_socket_data$r_port_info, ptype));
+	cid$resp_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$r_port_info, ptype));
 
 	# orig ports
 	if ( t_socket_data$o_port_info != "NULL" )
-		cid$orig_p = s_port( fmt("%s/%s", t_socket_data$o_port_info, ptype));
+		cid$orig_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$o_port_info, ptype));
 	else
-		cid$orig_p = s_port( fmt("0/%s", ptype));
+		cid$orig_p = AUDITD_CORE::s_port( fmt("0/%s", ptype));
 
 	# IP Addresses
 	# resp host
-	cid$resp_h = s_addr(t_socket_data$r_addr_info);
+	cid$resp_h = AUDITD_CORE::s_addr(t_socket_data$r_addr_info);
 
 	# orig host
 	if ( t_socket_data$r_addr_info != "NULL" )
-		cid$resp_h = s_addr(t_socket_data$r_addr_info);
+		cid$resp_h = AUDITD_CORE::s_addr(t_socket_data$r_addr_info);
 	else
-		cid$resp_h = s_addr("0.0.0.0");
+		cid$resp_h = AUDITD_CORE::s_addr("0.0.0.0");
+
+	#print fmt("NET REGISTER CONN %s", cid);
 
 	# We have a conn_id more or less whicih gives us a 'what'
 	#  hand it off with the 'who' information to the connection
 	#  correlator.
 	# Still working on details ...
-	AUDITD_NET::audit_conn_register(cid, i);
+	#AUDITD_NET::audit_conn_register(cid, i);
 
 	return 0;
+	}
+
+
+# Look for a unexpected transformation of the identity subvalues
+#  returning a vector of changes.
+#
+# NOTE: the record provided by AUDITD_CORE::identityState[] has *not* yet been synced 
+#  to the current living record, so changes will be reflected in the diff
+#  between the live record and the historical.
+#
+# NOTE2: Since it is not possible to know what is the cause of the transition,
+#  this function only identifies the existance of a non-whitelisted uid.
+#
+# NOTE3: In the event that the reporting is appening in a non-login situation
+#  there will be no session id.  In this case we just bail since attribution 
+#  at this point is a little murky.
+#
+function process_identity(inf: AUDITD_CORE::Info) : count
+	{
+	# return value is a map of 
+	local ret_val = 0;
+
+	# no session, identity is a bit up in the air ...
+	if ( inf$ses == -1 ) {
+		return ret_val;
+		}
+	else 
+		ret_val = 0;
+
+	# Tests current set of provided identities against the current archived set
+	#  - pick it up.
+	#local id_index =  get_identity_id(inf$i$ses, inf$i$node);
+	#local id: AUDITD_CORE::identity;
+#
+	#if ( id_index !in AUDITD_CORE::identityState ) {
+	#	return ret_val;
+	#	}
+	#else {
+	#	id =  AUDITD_CORE::identityState[id_index];
+	#	}
+
+	# In this case the record is either new or corrupt.
+	if ( |inf$i$idv| == 0 ) {
+		print fmt("skip zero: %s", inf);
+		return ret_val;
+		}
+	
+	if ( inf$i$idv[AUDITD_CORE::v_uid] == NULL_ID ) {
+		print fmt("skip NULL: %s", inf);
+		return ret_val;
+		}
+
+	# Now loop through the various identities, looking for changes
+	local id_change: string = "";
+	#
+	for ( i in inf$i$p_idv ) {
+		print fmt("process_identity %s : (old) %s (new) %s", AUDITD_CORE::translate_id(i), inf$i$p_idv[i], inf$i$idv[i]);
+		# Compare older (looked up) value, against the newer
+		#  one taken from the presented AUDITD_CORE::Info object
+		# Skip idv[0] since that is not a OS identity 
+		if ( (i > 0) && (inf$i$p_idv[i] != inf$i$idv[i]) ) {
+
+			#print fmt("ID CHANGE: %s -> %s", inf$i$p_idv[i], inf$i$idv[i]);
+			# A change has been detected ...
+			# Check the identities against whitelist candidates for
+			#  user and group transitions and report back the change.
+			# At this point we need to evaluate just *what* it was that 
+			#  forced the tansition, so just report back change.
+			#if ( (inf$i$p_idv[i] in whitelist_to_id) || (old_id$p_idv[i] in whitelist_from_id) ) {
+			if ( (inf$i$idv[i] in whitelist_to_id) || inf$i$idv[i] == "-1") {
+
+				print fmt("NO ID %s CHANGE: %s -> %s", AUDITD_CORE::translate_id(i), inf$i$p_idv[i], inf$i$idv[i]);
+				# do nothing
+				}
+			else {
+				++ret_val;
+				print fmt("CLEAN ID %s CHANGE: %s -> %s", AUDITD_CORE::translate_id(i), inf$i$p_idv[i], inf$i$idv[i]);
+				id_change = fmt("%s [(%s) %s -> %s]", id_change, AUDITD_CORE::translate_id(i), inf$i$p_idv[i], inf$i$idv[i] );
+				}
+			
+			}
+		} # end for loop
+
+	if ( ret_val > 0 ) {
+		local xid = fmt("%s:%s", inf$node, inf$ses);
+		local t_hrec = execution_history[xid];
+
+		NOTICE([$note=AUDITD_IDTransform,
+			$msg = fmt("%s SID: %s COMMAND: %s %s %s [%s]", inf$ts, inf$ses, inf$comm, inf$node, id_change, t_hrec$exec_hist)]);
+
+		print fmt("AUDITD_IDTransform %s SID: %s COMMAND: %s %s ", inf$ts, inf$ses, inf$syscall, inf$comm);
+
+		}
+
+	return ret_val;
 	}
 
 function exec_pathcheck(exec_path: string) : count
@@ -427,56 +502,61 @@ function exec_pathcheck(exec_path: string) : count
 	return ret_val;
 	}
 
-function exec_history(inf: Info) : count
+function exec_history(inf: AUDITD_CORE::Info) : history_rec
 	{
 	# Mostly this is a library function to track execution
 	#  to look into in the event of a permission transition
 	#
-	local ret_val = 0;
-	local id = inf$i$idv[v_auid];
+	
+	local id = fmt("%s:%s", inf$node, inf$ses);
+	local xvalue = fmt("%s_%s", inf$syscall, inf$comm);
 	local t_hrec: history_rec;
-
+ 
 	if ( id !in execution_history ) {
 		# new identity
-		t_hrec$exec_count = 1;
-		t_hrec$exec_hist[1] = inf$exe;
+		t_hrec$exec_hist = vector("NULL", "NULL", "NULL", "NULL", "NULL");
+		t_hrec$exec_count = 0;
+		t_hrec$exec_hist[0] = xvalue;
 		}
 	else {
+		t_hrec = execution_history[id];
 		# calculate new position in table
-		local n = (t_hrec$exec_count % execution_history_length) + 1;
-		
 		++t_hrec$exec_count;
-		t_hrec$exec_hist[n] = inf$exe;
+		local n = t_hrec$exec_count % execution_history_length;
+		#print fmt("exec history [%s]: %s %s", n, xvalue, id);	
+		t_hrec$exec_hist[n] = xvalue;
 		}
 
-	return ret_val;
+	execution_history[id] = t_hrec;
+	return t_hrec;
 	}
 
 
-function exec_wrapper(inf: Info) : count
+function process_wrapper(inf: AUDITD_CORE::Info) : count
 	{
 	# There are many things to be done with the execution chain.  This is the wrapper
 	#   for that set of things to do.
-	# Where is (it) being executed
-	# Permissions chain/changes
-	# Exec history ( n=5?)
+	# If the session bit has not been set, this will get dumped since those activities 
+	#   tend to be more system internal related.
+	#
 	local ret_val = 0;
 
 	if ( exec_blacklist_test )
 		exec_pathcheck(inf$exe);
 
-	exec_history(inf);
+	local xh = exec_history(inf);
 
 	# track id drift.  start by just detecting it, then begin building
 	#  whitelists and implement
 	if ( identity_drift_test ) {
 		if (process_identity(inf) != 0 ) {
 			# something changed ..
-
+			#print fmt("identity change for %s %s", inf$i$idv, xh$exec_hist);
 			}
 			
 		}
 
+#print fmt("PR OUT");
 	return ret_val;
 	}
 
@@ -507,24 +587,27 @@ event syscall_flush(index: string)
 	return;
 	}
 
-event auditd_policy_dispatcher(inf: Info)
+event auditd_policy_dispatcher(inf: AUDITD_CORE::Info)
 	{
-	# This makes routing decisions for policy based on Info content.  It is
+	# This makes routing decisions for policy based on AUDITD_CORE::Info content.  It is
 	#  a bit of a kluge, but will have to do for now.
 
 	# Initial filtering based on action and key values
 	#  ex: {PLACE_OBJ, PATH} .
-
+	#process_wrapper(inf);
 	# Key is from audit.rules
 	#
 	local action = inf$action;
 	local key    = inf$key;
 	local syscall = inf$syscall;	
+	#print fmt("KEY: %s ACTION: %s", key, action);
 
         switch ( action ) {
         case "EXECVE":
+		#process_wrapper(inf);
                 break;
         case "GENERIC":
+		process_wrapper(inf);
                 break;
         case "PLACE":
                 break;
@@ -534,6 +617,7 @@ event auditd_policy_dispatcher(inf: Info)
 		#
                 break;
         case "SYSCALL":
+		process_wrapper(inf);
 		switch( syscall ) {
 			### ----- ## ----- ####
 			# from syscalls: bind, connect, accept, accept4, listen, socketpair, socket
@@ -562,12 +646,19 @@ event auditd_policy_dispatcher(inf: Info)
 			### ----- ## ----- ####
 			# 
 			case "execve":
-				print "calling exec_wrapper";
-				exec_wrapper(inf);
+				#print "calling process_wrapper";
 				break;
+			default:
+			        #if ( identity_drift_test ) {
+                		#	if (process_identity(inf) != 0 ) {
+                        	#		print fmt("default syscall perm change for %s", syscall );
+                        	#		}
+				#	}
+        		        break;
 			}
-                break;
+			break;
         case "USER":
+		process_wrapper(inf);
                 break;
         }
 
@@ -575,6 +666,40 @@ event auditd_policy_dispatcher(inf: Info)
 
 	} # event end
 
-# do a test for "where" something is executed like /dev/shm ...
+function auditd_execve(i: AUDITD_CORE::Info)
+        {
+		local ao = AUDITD_CORE::get_action_obj(i$index,i$node);
+		event AUDITD_POLICY::auditd_policy_dispatcher(ao);
+	}
+
+function auditd_generic(i: AUDITD_CORE::Info)
+        {
+		local ao = AUDITD_CORE::get_action_obj(i$index,i$node);
+		event AUDITD_POLICY::auditd_policy_dispatcher(ao);
+	}
+
+function auditd_place(i: AUDITD_CORE::Info)
+        {
+		local ao = AUDITD_CORE::get_action_obj(i$index,i$node);
+		event AUDITD_POLICY::auditd_policy_dispatcher(ao);
+	}
+
+function auditd_saddr(i: AUDITD_CORE::Info)
+        {
+		local ao = AUDITD_CORE::get_action_obj(i$index,i$node);
+		event AUDITD_POLICY::auditd_policy_dispatcher(ao);
+	}
+
+function auditd_syscall(i: AUDITD_CORE::Info)
+        {
+		local ao = AUDITD_CORE::get_action_obj(i$index,i$node);
+		event AUDITD_POLICY::auditd_policy_dispatcher(ao);
+	}
+
+function auditd_user(i: AUDITD_CORE::Info)
+        {
+		local ao = AUDITD_CORE::get_action_obj(i$index,i$node);
+		event AUDITD_POLICY::auditd_policy_dispatcher(ao);
+	}
 
 
