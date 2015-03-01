@@ -12,3 +12,4 @@
 # aux_scripts="auditd_policy/init_node"
 #
 redef AUDITD_IN_STREAM::DATANODE = T;
+redef AUDITD_IN_STREAM::data_file = "/home/bro/logs/AUDIT/data";
