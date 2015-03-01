@@ -44,18 +44,18 @@ function execve_f(data: string) : count
 		return 1;
 		}
 
-	local index = s_string( parts[1] );	# form a:b, a=action count, b=which record in action
-	local flavor = s_string( parts[2] );	# base object type
-	local action = s_string( parts[3] );	# the thing that happens, also called 'event' in traditional auditd docs
-	local ts = s_time( parts[4] );		# time of record
-	local node = s_string( parts[5] );
-	local ses = s_int( parts[6] );		# login session ID
-	local pid = s_int( parts[7] );		# Process id
+	local index = AUDITD_CORE::s_string( parts[1] );	# form a:b, a=action count, b=which record in action
+	local flavor = AUDITD_CORE::s_string( parts[2] );	# base object type
+	local action = AUDITD_CORE::s_string( parts[3] );	# the thing that happens, also called 'event' in traditional auditd docs
+	local ts = AUDITD_CORE::s_time( parts[4] );		# time of record
+	local node = AUDITD_CORE::s_string( parts[5] );
+	local ses = AUDITD_CORE::s_int( parts[6] );		# login session ID
+	local pid = AUDITD_CORE::s_int( parts[7] );		# Process id
 	#
-	local argc = s_int( parts[8] );		# number of arguments for exec (starts at 1)
-	local argument = s_string( parts[9] );	# total argument string
+	local argc = AUDITD_CORE::s_int( parts[8] );		# number of arguments for exec (starts at 1)
+	local argument = AUDITD_CORE::s_string( parts[9] );	# total argument string
 
-	event auditd_execve(index$data, action$data, ts$data, node$data, ses, pid, argc, argument$data);
+	#event auditd_execve(index$data, action$data, ts$data, node$data, ses, pid, argc, argument$data);
 	#event AUDITD_CORE::auditd_execve(index, action, ts, node, ses, pid, argc, argument);
 
 	return 0;
@@ -72,34 +72,34 @@ function generic_f(data: string) : count
 		return 1;
 		}
 
-	local index = s_string( parts[1] );	# form a:b, a=action count, b=which record in action
-	local flavor = s_string( parts[2] );	# base object type
-	local action = s_string( parts[3] );	# the thing that happens, also called 'event' in traditional auditd docs
-	local ts = s_time( parts[4] );		# time of record
-	local node = s_string( parts[5] );	# host data originated from
+	local index = AUDITD_CORE::s_string( parts[1] );	# form a:b, a=action count, b=which record in action
+	local flavor = AUDITD_CORE::s_string( parts[2] );	# base object type
+	local action = AUDITD_CORE::s_string( parts[3] );	# the thing that happens, also called 'event' in traditional auditd docs
+	local ts = AUDITD_CORE::s_time( parts[4] );		# time of record
+	local node = AUDITD_CORE::s_string( parts[5] );	# host data originated from
 	#
-	local auid = s_string( parts[6] );
-	local key = s_string( parts[7] ); 
-	local comm = s_string( parts[8] );
-	local exe = s_string( parts[9] );
-	local a0 = s_string( parts[10] );
-	local a1 = s_string( parts[11] );
-	local a2 = s_string( parts[12] );
-	local uid = s_string( parts[13] );
-	local gid = s_string( parts[14] );
-	local euid = s_string( parts[15] );
-	local egid = s_string( parts[16] );
-	local fsuid = s_string( parts[17] );
-	local fsgid = s_string( parts[18] );
-	local suid = s_string( parts[19] );
-	local sgid = s_string( parts[20] );
-	local pid = s_int( parts[21] );
-	local ppid = s_int( parts[22] );
-	local ses = s_int( parts[23] );
-	local tty = s_string( parts[24] );
-	local terminal = s_string( parts[25] );
-	local success = s_string( parts[26] );
-	local ext = s_string( parts[27] );	
+	local auid = AUDITD_CORE::s_string( parts[6] );
+	local key = AUDITD_CORE::s_string( parts[7] ); 
+	local comm = AUDITD_CORE::s_string( parts[8] );
+	local exe = AUDITD_CORE::s_string( parts[9] );
+	local a0 = AUDITD_CORE::s_string( parts[10] );
+	local a1 = AUDITD_CORE::s_string( parts[11] );
+	local a2 = AUDITD_CORE::s_string( parts[12] );
+	local uid = AUDITD_CORE::s_string( parts[13] );
+	local gid = AUDITD_CORE::s_string( parts[14] );
+	local euid = AUDITD_CORE::s_string( parts[15] );
+	local egid = AUDITD_CORE::s_string( parts[16] );
+	local fsuid = AUDITD_CORE::s_string( parts[17] );
+	local fsgid = AUDITD_CORE::s_string( parts[18] );
+	local suid = AUDITD_CORE::s_string( parts[19] );
+	local sgid = AUDITD_CORE::s_string( parts[20] );
+	local pid = AUDITD_CORE::s_int( parts[21] );
+	local ppid = AUDITD_CORE::s_int( parts[22] );
+	local ses = AUDITD_CORE::s_int( parts[23] );
+	local tty = AUDITD_CORE::s_string( parts[24] );
+	local terminal = AUDITD_CORE::s_string( parts[25] );
+	local success = AUDITD_CORE::s_string( parts[26] );
+	local ext = AUDITD_CORE::s_string( parts[27] );	
 
 	event auditd_generic(index$data, action$data, ts$data, node$data, ses, pid, auid$data, comm$data, exe$data, a0$data, a1$data, a2$data, uid$data, gid$data, euid$data, egid$data, fsuid$data, fsgid$data, suid$data, sgid$data, ppid, tty$data, terminal$data, success$data, ext$data);
 
@@ -117,20 +117,20 @@ function place_f(data: string) : count
 		print fmt("place_f parse error for %s", data);
 		return 1;
 		}
-	local index = s_string( parts[1] );	# form a:b, a=action count, b=which record in action
-	local flavor = s_string( parts[2] );	# base object type
-	local action = s_string( parts[3] );	# the thing that happens, also called 'event' in traditional auditd docs
-	local ts = s_time( parts[4] );		# time of record
-	local node = s_string( parts[5] );	# host data originated from
-	local ses = s_int( parts[6] );
-	local pid = s_int( parts[7] );
+	local index = AUDITD_CORE::s_string( parts[1] );	# form a:b, a=action count, b=which record in action
+	local flavor = AUDITD_CORE::s_string( parts[2] );	# base object type
+	local action = AUDITD_CORE::s_string( parts[3] );	# the thing that happens, also called 'event' in traditional auditd docs
+	local ts = AUDITD_CORE::s_time( parts[4] );		# time of record
+	local node = AUDITD_CORE::s_string( parts[5] );	# host data originated from
+	local ses = AUDITD_CORE::s_int( parts[6] );
+	local pid = AUDITD_CORE::s_int( parts[7] );
 	#
-	local cwd = s_string( parts[8] );
-	local path_name = s_string( parts[9] );
-	local inode = s_int( parts[10] );
-	local mode = s_int( parts[11] );
-	local ouid = s_string( parts[12] );
-	local ogid = s_string( parts[13] );
+	local cwd = AUDITD_CORE::s_string( parts[8] );
+	local path_name = AUDITD_CORE::s_string( parts[9] );
+	local inode = AUDITD_CORE::s_int( parts[10] );
+	local mode = AUDITD_CORE::s_int( parts[11] );
+	local ouid = AUDITD_CORE::s_string( parts[12] );
+	local ogid = AUDITD_CORE::s_string( parts[13] );
 
 	event auditd_place(index$data, action$data, ts$data, node$data, ses, pid, cwd$data, path_name$data, inode, mode, ouid$data, ogid$data);
 	return 0;
@@ -146,15 +146,15 @@ function saddr_f(data: string) : count
 		print fmt("saddr_f parse error for %s", data);
 		return 1;
 		}
-	local index = s_string( parts[1] );	# form a:b, a=action count, b=which record in action
-	local flavor = s_string( parts[2] );	# base object type
-	local action = s_string( parts[3] );	# the thing that happens, also called 'event' in traditional auditd docs
-	local ts = s_time( parts[4] );		# time of record
-	local node = s_string( parts[5] );	# host data originated from
-	local ses = s_int( parts[6] );
-	local pid = s_int( parts[7] );
+	local index = AUDITD_CORE::s_string( parts[1] );	# form a:b, a=action count, b=which record in action
+	local flavor = AUDITD_CORE::s_string( parts[2] );	# base object type
+	local action = AUDITD_CORE::s_string( parts[3] );	# the thing that happens, also called 'event' in traditional auditd docs
+	local ts = AUDITD_CORE::s_time( parts[4] );		# time of record
+	local node = AUDITD_CORE::s_string( parts[5] );	# host data originated from
+	local ses = AUDITD_CORE::s_int( parts[6] );
+	local pid = AUDITD_CORE::s_int( parts[7] );
 	#
-	local saddr = s_string( parts[8] );	# address object (local or inet)
+	local saddr = AUDITD_CORE::s_string( parts[8] );	# address object (local or inet)
 
 	event auditd_saddr(index$data, action$data, ts$data, node$data, ses, pid, saddr$data);
 	return 0;
@@ -170,35 +170,35 @@ function syscall_f(data: string) : count
 		print fmt("syscall_f parse error for %s", data);
 		return 1;
 		}
-	local index = s_string( parts[1] );	# form a:b, a=action count, b=which record in action
-	local flavor = s_string( parts[2] );	# base object type
-	local action = s_string( parts[3] );	# the thing that happens, also called 'event' in traditional auditd docs
-	local ts = s_time( parts[4] );		# time of record
-	local node = s_string( parts[5] );
+	local index = AUDITD_CORE::s_string( parts[1] );	# form a:b, a=action count, b=which record in action
+	local flavor = AUDITD_CORE::s_string( parts[2] );	# base object type
+	local action = AUDITD_CORE::s_string( parts[3] );	# the thing that happens, also called 'event' in traditional auditd docs
+	local ts = AUDITD_CORE::s_time( parts[4] );		# time of record
+	local node = AUDITD_CORE::s_string( parts[5] );
 	#
-	local ses = s_int( parts[6] );		# login session ID
-	local auid = s_string( parts[7] );
-	local syscall = s_string( parts[8] );
-	local key = s_string( parts[9] ); 
-	local comm = s_string( parts[10] );
-	local exe = s_string( parts[11] );
-	local a0 = s_string( parts[12] );
-	local a1 = s_string( parts[13] );
-	local a2 = s_string( parts[14] );
-	local uid = s_string( parts[15] );
-	local gid = s_string( parts[16] );
-	local euid = s_string( parts[17] );
-	local egid = s_string( parts[18] );
-	local fsuid = s_string( parts[19] );
-	local fsgid = s_string( parts[20] );
-	local suid = s_string( parts[21] );
-	local sgid = s_string( parts[22] );
-	local pid = s_int( parts[23] );
-	local ppid = s_int( parts[24] );
-	local tty = s_string( parts[25] );
-	#local terminal = s_string( parts[26] );
-	local success = s_string( parts[26] );
-	local ext = s_string( parts[27] );
+	local ses = AUDITD_CORE::s_int( parts[6] );		# login session ID
+	local auid = AUDITD_CORE::s_string( parts[7] );
+	local syscall = AUDITD_CORE::s_string( parts[8] );
+	local key = AUDITD_CORE::s_string( parts[9] ); 
+	local comm = AUDITD_CORE::s_string( parts[10] );
+	local exe = AUDITD_CORE::s_string( parts[11] );
+	local a0 = AUDITD_CORE::s_string( parts[12] );
+	local a1 = AUDITD_CORE::s_string( parts[13] );
+	local a2 = AUDITD_CORE::s_string( parts[14] );
+	local uid = AUDITD_CORE::s_string( parts[15] );
+	local gid = AUDITD_CORE::s_string( parts[16] );
+	local euid = AUDITD_CORE::s_string( parts[17] );
+	local egid = AUDITD_CORE::s_string( parts[18] );
+	local fsuid = AUDITD_CORE::s_string( parts[19] );
+	local fsgid = AUDITD_CORE::s_string( parts[20] );
+	local suid = AUDITD_CORE::s_string( parts[21] );
+	local sgid = AUDITD_CORE::s_string( parts[22] );
+	local pid = AUDITD_CORE::s_int( parts[23] );
+	local ppid = AUDITD_CORE::s_int( parts[24] );
+	local tty = AUDITD_CORE::s_string( parts[25] );
+	#local terminal = AUDITD_CORE::s_string( parts[26] );
+	local success = AUDITD_CORE::s_string( parts[26] );
+	local ext = AUDITD_CORE::s_string( parts[27] );
 
 	event auditd_syscall(index$data, action$data, ts$data, node$data, ses, pid, auid$data, syscall$data, key$data, comm$data, exe$data, a0$data, a1$data, a2$data, uid$data, gid$data, euid$data, egid$data, fsuid$data, fsgid$data, suid$data, sgid$data, ppid, tty$data, success$data, ext$data);
 	return 0;
@@ -214,29 +214,29 @@ function user_f(data: string) : count
 		print fmt("user_f parse error for %s", data);
 		return 1;
 		}
-	local index = s_string( parts[1] );	# form a:b, a=action count, b=which record in action
-	local flavor = s_string( parts[2] );	# base object type
-	local action = s_string( parts[3] );	# the thing that happens, also called 'event' in traditional auditd docs
-	local ts = s_time( parts[4] );		# time of record
-	local node = s_string( parts[5] );
+	local index = AUDITD_CORE::s_string( parts[1] );	# form a:b, a=action count, b=which record in action
+	local flavor = AUDITD_CORE::s_string( parts[2] );	# base object type
+	local action = AUDITD_CORE::s_string( parts[3] );	# the thing that happens, also called 'event' in traditional auditd docs
+	local ts = AUDITD_CORE::s_time( parts[4] );		# time of record
+	local node = AUDITD_CORE::s_string( parts[5] );
 	#
-	local ses = s_int( parts[6] );
-	local auid = s_string( parts[7] );
-	local egid = s_string( parts[8] );
-	local euid = s_string( parts[9] );
-	local fsgid = s_string( parts[10] );
-	local fsuid = s_string( parts[11] );
-	local gid = s_string( parts[12] );
-	local suid = s_string( parts[13] );
-	local sgid = s_string( parts[14] );
-	local uid = s_string( parts[15] );
-	local pid = s_int( parts[16] );
-	local success = s_string( parts[17] );
-	local ext = s_string( parts[18] );
-	local terminal = s_string( parts[19] );
-	local exe = s_string( parts[20] );
-	#local msg = s_string( parts[21] );
-	local msg = s_string("NODATA");
+	local ses = AUDITD_CORE::s_int( parts[6] );
+	local auid = AUDITD_CORE::s_string( parts[7] );
+	local egid = AUDITD_CORE::s_string( parts[8] );
+	local euid = AUDITD_CORE::s_string( parts[9] );
+	local fsgid = AUDITD_CORE::s_string( parts[10] );
+	local fsuid = AUDITD_CORE::s_string( parts[11] );
+	local gid = AUDITD_CORE::s_string( parts[12] );
+	local suid = AUDITD_CORE::s_string( parts[13] );
+	local sgid = AUDITD_CORE::s_string( parts[14] );
+	local uid = AUDITD_CORE::s_string( parts[15] );
+	local pid = AUDITD_CORE::s_int( parts[16] );
+	local success = AUDITD_CORE::s_string( parts[17] );
+	local ext = AUDITD_CORE::s_string( parts[18] );
+	local terminal = AUDITD_CORE::s_string( parts[19] );
+	local exe = AUDITD_CORE::s_string( parts[20] );
+	#local msg = AUDITD_CORE::s_string( parts[21] );
+	local msg = AUDITD_CORE::s_string("NODATA");
 
 	event auditd_user(index$data, action$data, ts$data, node$data, ses, pid, auid$data, euid$data, egid$data, fsuid$data, fsgid$data, suid$data, sgid$data, uid$data, gid$data, exe$data, terminal$data, success$data, ext$data, msg$data);
 	return 0;
