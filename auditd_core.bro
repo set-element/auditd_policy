@@ -52,7 +52,7 @@ event auditd_execve(index: string, action: string, ts: time, node: string, ses: 
 		t_Info = sync_identity(index,node);
 		Log::write(LOG, t_Info);
 
-		AUDITD_POLICY::auditd_execve(t_Info);
+		AUDITD_POLICY::auditd_policy_dispatcher(t_Info);
 
 		delete_action(index,node);
 		}
@@ -117,7 +117,7 @@ event auditd_generic(index: string, action: string, ts: time, node: string, ses:
 
 	# identification
 	local t_id = build_identity(auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
-	update_identity(ses,node,t_id);
+	update_identity(ses,node,pid,ppid,t_id);
 
 	update_action(t_Info);
 
@@ -126,7 +126,7 @@ event auditd_generic(index: string, action: string, ts: time, node: string, ses:
 		t_Info = sync_identity(index,node);
 		Log::write(LOG, t_Info);
 
-		AUDITD_POLICY::auditd_generic(t_Info);
+		AUDITD_POLICY::auditd_policy_dispatcher(t_Info);
 
 		delete_action(index,node);
 		}
@@ -165,7 +165,7 @@ event auditd_place(index: string, action: string, ts: time, node: string, ses: i
 		t_Info = sync_identity(index,node);
 		Log::write(LOG, t_Info);
 
-		AUDITD_POLICY::auditd_place(t_Info);
+		AUDITD_POLICY::auditd_policy_dispatcher(t_Info);
 
 		delete_action(index,node);
 		}
@@ -245,7 +245,7 @@ event auditd_saddr(index: string, action: string, ts: time, node: string, ses: i
 		t_Info = sync_identity(index,node);
 		Log::write(LOG, t_Info);
 
-		AUDITD_POLICY::auditd_saddr(t_Info);
+		AUDITD_POLICY::auditd_policy_dispatcher(t_Info);
 
 		delete_action(index,node);
 		}
@@ -310,7 +310,7 @@ event auditd_syscall(index: string, action: string, ts: time, node: string, ses:
 
 	# identification
 	local t_id = build_identity(auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
-	update_identity(ses,node,t_id);
+	update_identity(ses,node,pid,ppid,t_id);
 	
 	update_action(t_Info);
 
@@ -319,7 +319,7 @@ event auditd_syscall(index: string, action: string, ts: time, node: string, ses:
 		t_Info = sync_identity(index,node);
 		Log::write(LOG, t_Info);
 
-		AUDITD_POLICY::auditd_syscall(t_Info);
+		AUDITD_POLICY::auditd_policy_dispatcher(t_Info);
 
 		delete_action(index,node);
 		}
@@ -367,7 +367,20 @@ event auditd_user(index: string, action: string, ts: time, node: string, ses: in
 
 	# identification
 	local t_id = build_identity(auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
-	update_identity(ses,node,t_id);
+	update_identity(ses,node,pid,0,t_id);
+
+	# turn on/off identity transition checking
+	if ( action == "USER_START" )
+		{
+		print fmt("activate id test for %s", uid);
+		activate_id_test(ses, node);
+		}
+
+	if ( action == "USER_END" ) 
+		{
+		print fmt("disable id test for %s", uid);
+		disable_id_test(ses, node); 
+		}
 
 	update_action(t_Info);
 
@@ -376,7 +389,7 @@ event auditd_user(index: string, action: string, ts: time, node: string, ses: in
 		t_Info = sync_identity(index,node);
 		Log::write(LOG, t_Info);
 
-		AUDITD_POLICY::auditd_user(t_Info);
+		AUDITD_POLICY::auditd_policy_dispatcher(t_Info);
 
 		delete_action(index,node);
 		}
@@ -386,6 +399,5 @@ event auditd_user(index: string, action: string, ts: time, node: string, ses: in
 
 event bro_init() &priority = 5
 {
-	  Log::create_stream(LOG, [$columns=Info]);
-	  #Log::create_stream(AUDITD_CORE::LOG, [$columns=Info]);
+	  Log::create_stream(AUDITD_CORE::LOG, [$columns=Info]);
 }
