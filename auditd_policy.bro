@@ -21,8 +21,10 @@ export {
 
 	redef enum Notice::Type += {
 		AUDITD_IDTransform,
+		AUDITD_IDTransformSkip,
 		AUDITD_SocketOpen,
 		AUDITD_ExecPathcheck,
+		AUDITD_Longtime,
 		};
 
 	# tag for file loaded
@@ -50,8 +52,8 @@ export {
 	# List of identities which are consitered ok to be seen translating
 	#  between one another.
 	#
-	global whitelist_to_id: set[string] &redef;
-	global whitelist_from_id: set[string] &redef;
+	global whitelist_to_id: set[string] = { "NULL", "-1", } &redef;
+	global whitelist_from_id: set[string] = { "NULL", "-1" } &redef;
 
 	### --- ###
 	# This is the set of system calls that define the creation of a 
@@ -76,7 +78,7 @@ export {
 
 	## -- ##
 
-	global auditd_policy_dispatcher: event(i: AUDITD_CORE::Info);
+	global auditd_policy_dispatcher: function(i: AUDITD_CORE::Info);
 	global s: event(s: string);
 
 	global auditd_execve: function(i: AUDITD_CORE::Info);
@@ -86,6 +88,7 @@ export {
 	global auditd_syscall: function(i: AUDITD_CORE::Info);
 	global auditd_user: function(i: AUDITD_CORE::Info);
 
+	global identity_time_test: event(ses: int, node: string, n: int, exe: string);
 	## Execution configuration ##
 
 	# blacklist of directories which 
@@ -94,6 +97,11 @@ export {
 	
 	# identiy related configs
 	global identity_drift_test = T &redef;
+	
+	# Table of allowed identity transitions
+	global identity_transition_wl: table[string] of string &redef;
+	global ExeWhitelist: set[string] &redef;
+	global UpList = set("root") &redef;
 
 	} # end export
 		
@@ -118,11 +126,10 @@ function identity_atomic(old_id: string, new_id: string): bool
 	{
 	local ret_val = F;
 
-	if ( (new_id != old_id) && (old_id != NULL_ID) ) {
+	if ( new_id != old_id ) {
+	
 		# there has been a non-trivial change in identity
-		if ( (new_id !in whitelist_to_id) && (old_id !in whitelist_from_id) )
-			ret_val = F;
-		else
+		if ( (new_id !in whitelist_to_id) || (old_id !in whitelist_from_id) )
 			ret_val = T;
 		}
 
@@ -274,6 +281,7 @@ function network_register_listener(i: AUDITD_CORE::Info) : count
 		return ret_val;
 
 	ret_val = 1;
+
 	# now if there is sufficient information in the socket_data structure we
 	#  have enjoyed it long enough and should pass it off to the server object
 	#  holding all the info on this system
@@ -402,82 +410,69 @@ function network_register_conn(i: AUDITD_CORE::Info) : count
 #  there will be no session id.  In this case we just bail since attribution 
 #  at this point is a little murky.
 #
-function process_identity(inf: AUDITD_CORE::Info) : count
+function process_identity(inf: AUDITD_CORE::Info) : vector of string
 	{
 	# return value is a map of 
-	local ret_val = 0;
+	local ret_val: vector of string = vector("0", ":", ":", ":", ":", ":", ":", ":", ":");
+	local n = 0;
 
 	# no session, identity is a bit up in the air ...
 	if ( inf$ses == -1 ) {
 		return ret_val;
 		}
-	else 
-		ret_val = 0;
-
-	# Tests current set of provided identities against the current archived set
-	#  - pick it up.
-	#local id_index =  get_identity_id(inf$i$ses, inf$i$node);
-	#local id: AUDITD_CORE::identity;
-#
-	#if ( id_index !in AUDITD_CORE::identityState ) {
-	#	return ret_val;
-	#	}
-	#else {
-	#	id =  AUDITD_CORE::identityState[id_index];
-	#	}
 
 	# In this case the record is either new or corrupt.
 	if ( |inf$i$idv| == 0 ) {
-		print fmt("skip zero: %s", inf);
+		#print fmt("ID check skip zero: %s", inf);
+		return ret_val;
+		}
+
+	# even for legitimate records we will only be looking at identity transition between 
+	#   USER_START and USER_END record types	
+	#
+	if ( inf$i$id_test < 2 ) {
+		#print fmt("ID check skip: id_test==F");	
 		return ret_val;
 		}
 	
 	if ( inf$i$idv[AUDITD_CORE::v_uid] == NULL_ID ) {
-		print fmt("skip NULL: %s", inf);
+		#print fmt("ID check skip NULL: %s", inf);
 		return ret_val;
 		}
 
 	# Now loop through the various identities, looking for changes
-	local id_change: string = "";
 	#
-	for ( i in inf$i$p_idv ) {
-		print fmt("process_identity %s : (old) %s (new) %s", AUDITD_CORE::translate_id(i), inf$i$p_idv[i], inf$i$idv[i]);
-		# Compare older (looked up) value, against the newer
-		#  one taken from the presented AUDITD_CORE::Info object
+	for ( ndx in inf$i$p_idv ) {
+		# Compare older identity, against the newer and check the identities against whitelists
 		# Skip idv[0] since that is not a OS identity 
-		if ( (i > 0) && (inf$i$p_idv[i] != inf$i$idv[i]) ) {
+		if ( (ndx > 0) && identity_atomic(inf$i$p_idv[ndx], inf$i$idv[ndx]) ) {
 
-			#print fmt("ID CHANGE: %s -> %s", inf$i$p_idv[i], inf$i$idv[i]);
-			# A change has been detected ...
-			# Check the identities against whitelist candidates for
-			#  user and group transitions and report back the change.
-			# At this point we need to evaluate just *what* it was that 
-			#  forced the tansition, so just report back change.
-			#if ( (inf$i$p_idv[i] in whitelist_to_id) || (old_id$p_idv[i] in whitelist_from_id) ) {
-			if ( (inf$i$idv[i] in whitelist_to_id) || inf$i$idv[i] == "-1") {
+			# transition up or down, second test for up avoids root -> root?
+			if ( (inf$i$idv[ndx] in UpList) && (inf$i$p_idv[ndx] !in UpList) ) {
+				# transition to root
+				inf$i$id_flag[ndx] = T;
+				# see if exec is in white list, else run timer test
+				if ( inf$exe ! in ExeWhitelist ) {
+					schedule 2 sec { AUDITD_POLICY::identity_time_test(inf$ses, inf$node, ndx, inf$exe) };
+					}
 
-				print fmt("NO ID %s CHANGE: %s -> %s", AUDITD_CORE::translate_id(i), inf$i$p_idv[i], inf$i$idv[i]);
-				# do nothing
+				#print fmt(" dID UP: %s %s->%s", AUDITD_CORE::translate_id(ndx), inf$i$p_idv[ndx], inf$i$idv[ndx]);
+
 				}
 			else {
-				++ret_val;
-				print fmt("CLEAN ID %s CHANGE: %s -> %s", AUDITD_CORE::translate_id(i), inf$i$p_idv[i], inf$i$idv[i]);
-				id_change = fmt("%s [(%s) %s -> %s]", id_change, AUDITD_CORE::translate_id(i), inf$i$p_idv[i], inf$i$idv[i] );
+				# not in UpList
+				inf$i$id_flag[ndx] = F;
+				#print fmt(" dID DOWN: %s %s->%s", AUDITD_CORE::translate_id(ndx), inf$i$p_idv[ndx], inf$i$idv[ndx]);
 				}
-			
-			}
+
+			local token = fmt("%s:%s", inf$i$p_idv[ndx], inf$i$idv[ndx]);
+			ret_val[ndx] = token;
+			# ret_val[0] contains number of changed values
+			++n;
+			ret_val[0] = fmt("%s", n);
+		
+			} # end if
 		} # end for loop
-
-	if ( ret_val > 0 ) {
-		local xid = fmt("%s:%s", inf$node, inf$ses);
-		local t_hrec = execution_history[xid];
-
-		NOTICE([$note=AUDITD_IDTransform,
-			$msg = fmt("%s SID: %s COMMAND: %s %s %s [%s]", inf$ts, inf$ses, inf$comm, inf$node, id_change, t_hrec$exec_hist)]);
-
-		print fmt("AUDITD_IDTransform %s SID: %s COMMAND: %s %s ", inf$ts, inf$ses, inf$syscall, inf$comm);
-
-		}
 
 	return ret_val;
 	}
@@ -508,8 +503,8 @@ function exec_history(inf: AUDITD_CORE::Info) : history_rec
 	#  to look into in the event of a permission transition
 	#
 	
-	local id = fmt("%s:%s", inf$node, inf$ses);
-	local xvalue = fmt("%s_%s", inf$syscall, inf$comm);
+	local id = fmt("%s:%s_%s", inf$node, inf$ses, inf$pid);
+	local xvalue = fmt("%s_%s", inf$syscall, inf$exe);
 	local t_hrec: history_rec;
  
 	if ( id !in execution_history ) {
@@ -523,12 +518,44 @@ function exec_history(inf: AUDITD_CORE::Info) : history_rec
 		# calculate new position in table
 		++t_hrec$exec_count;
 		local n = t_hrec$exec_count % execution_history_length;
-		#print fmt("exec history [%s]: %s %s", n, xvalue, id);	
+		#print fmt("exec history [%s]: %s %s %s", n, xvalue, id, inf$i$idv);	
 		t_hrec$exec_hist[n] = xvalue;
 		}
 
 	execution_history[id] = t_hrec;
 	return t_hrec;
+	}
+
+function sort_exec_history(hrec: history_rec) : vector of string
+	{
+	local miniloop: vector of count = vector(0,1,2,3,4);
+	local ret_val = vector("NULL", "NULL", "NULL", "NULL", "NULL");
+
+	for ( i in miniloop ) {
+
+		if ( (hrec$exec_count - i) > 0 ) {
+			ret_val[i] = hrec$exec_hist[((hrec$exec_count - i) % execution_history_length)];
+			}
+		}
+
+	return ret_val;
+	}
+
+
+
+
+function transition_whitelist(trans: string) : bool
+	{
+	# default value is unsafe
+	local ret_val = F;
+
+	# Form of the test uses the current identity syscall_exe with the
+	#   exe being the absolute path provided to the system call
+	#   identity_transition_wl
+	if ( trans in identity_transition_wl )
+		ret_val = T;
+
+	return ret_val;
 	}
 
 
@@ -546,23 +573,41 @@ function process_wrapper(inf: AUDITD_CORE::Info) : count
 
 	local xh = exec_history(inf);
 
-	# track id drift.  start by just detecting it, then begin building
-	#  whitelists and implement
+	# track id drift
 	if ( identity_drift_test ) {
-		if (process_identity(inf) != 0 ) {
-			# something changed ..
-			#print fmt("identity change for %s %s", inf$i$idv, xh$exec_hist);
-			}
-			
+		# vector of string
+		local change_value = process_identity(inf);
 		}
 
-#print fmt("PR OUT");
 	return ret_val;
 	}
 
 ### ----- # ----- ###
 #      Events
 ### ----- # ----- ###
+
+event identity_time_test(ses: int, node: string, n: int, exe: string)
+	{
+	local t_id = AUDITD_CORE::get_identity_id(ses, node);
+
+	if ( t_id in AUDITD_CORE::identityState ) {
+
+		local t_idState = AUDITD_CORE::identityState[t_id];
+	
+		# test if currently in elevated state
+		if ( t_idState$id_flag[n] ) {
+
+			local id = t_idState$idv[n];
+			local p_id = t_idState$p_idv[n];
+	
+			NOTICE([$note=AUDITD_IDTransform,
+				$msg = fmt("%s %s %s -> %s %s", node, AUDITD_CORE::translate_id(n), id, p_id, exe)]);
+
+			}
+
+		} # end t_id in identityState
+
+	} # end event
 
 # This event currently in holding - might not need it
 
@@ -587,7 +632,7 @@ event syscall_flush(index: string)
 	return;
 	}
 
-event auditd_policy_dispatcher(inf: AUDITD_CORE::Info)
+function auditd_policy_dispatcher(inf: AUDITD_CORE::Info)
 	{
 	# This makes routing decisions for policy based on AUDITD_CORE::Info content.  It is
 	#  a bit of a kluge, but will have to do for now.
@@ -600,11 +645,10 @@ event auditd_policy_dispatcher(inf: AUDITD_CORE::Info)
 	local action = inf$action;
 	local key    = inf$key;
 	local syscall = inf$syscall;	
-	#print fmt("KEY: %s ACTION: %s", key, action);
 
         switch ( action ) {
         case "EXECVE":
-		#process_wrapper(inf);
+		process_wrapper(inf);
                 break;
         case "GENERIC":
 		process_wrapper(inf);
@@ -646,60 +690,17 @@ event auditd_policy_dispatcher(inf: AUDITD_CORE::Info)
 			### ----- ## ----- ####
 			# 
 			case "execve":
-				#print "calling process_wrapper";
 				break;
 			default:
-			        #if ( identity_drift_test ) {
-                		#	if (process_identity(inf) != 0 ) {
-                        	#		print fmt("default syscall perm change for %s", syscall );
-                        	#		}
-				#	}
         		        break;
 			}
 			break;
         case "USER":
-		process_wrapper(inf);
+		#process_wrapper(inf);
                 break;
         }
 
 	
 
 	} # event end
-
-function auditd_execve(i: AUDITD_CORE::Info)
-        {
-		local ao = AUDITD_CORE::get_action_obj(i$index,i$node);
-		event AUDITD_POLICY::auditd_policy_dispatcher(ao);
-	}
-
-function auditd_generic(i: AUDITD_CORE::Info)
-        {
-		local ao = AUDITD_CORE::get_action_obj(i$index,i$node);
-		event AUDITD_POLICY::auditd_policy_dispatcher(ao);
-	}
-
-function auditd_place(i: AUDITD_CORE::Info)
-        {
-		local ao = AUDITD_CORE::get_action_obj(i$index,i$node);
-		event AUDITD_POLICY::auditd_policy_dispatcher(ao);
-	}
-
-function auditd_saddr(i: AUDITD_CORE::Info)
-        {
-		local ao = AUDITD_CORE::get_action_obj(i$index,i$node);
-		event AUDITD_POLICY::auditd_policy_dispatcher(ao);
-	}
-
-function auditd_syscall(i: AUDITD_CORE::Info)
-        {
-		local ao = AUDITD_CORE::get_action_obj(i$index,i$node);
-		event AUDITD_POLICY::auditd_policy_dispatcher(ao);
-	}
-
-function auditd_user(i: AUDITD_CORE::Info)
-        {
-		local ao = AUDITD_CORE::get_action_obj(i$index,i$node);
-		event AUDITD_POLICY::auditd_policy_dispatcher(ao);
-	}
-
 
