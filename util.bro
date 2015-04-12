@@ -7,14 +7,18 @@
 
 module AUDITD_CORE;
 
+@load host_core/health_check
+
 export {
 	const INFO_NULL  = "NULL";
 
         type identity: record {
-                ses:    int &default=-1;                   # numeric session id or 'unset'
-                node:   string &default=INFO_NULL;            # what host is this happening on
-                idv:    vector of string &log;                  # vector of identity values for current action
-                p_idv:  vector of string;                       # vector for *previous* action
+                ses:		int &default=-1;		# numeric session id or 'unset'
+                node:		string &default=INFO_NULL;      # what host is this happening on
+                idv:		vector of string &log;          # vector of identity values for current action
+                p_idv:		vector of string;               # vector for *previous* action
+		id_test:	count &default = 0;		# flag for identity transition checking: 0=F,1=F, >=2=T
+		id_flag:	vector of bool;			# mark changed idenity components: T=heightened, F=otherwise
                 };
 
         type Info: record {
@@ -140,21 +144,23 @@ export {
         global actionState: table[string] of Info;
         global identityState: table[string] of identity;
 
-        global action_delete_delay = 5 sec &redef;
+        global action_delete_delay = 5 min &redef;
 
         # exported functions and events
         global get_action_id: function(index: string, node: string) : string;
         global get_identity_id: function(ses: int, node: string) : string;
 
         global get_action_obj: function(index: string, node: string) : Info;
-        global get_identity_obj: function(ses: int, auid: string, node: string) : identity;
+        global get_identity_obj: function(ses: int, node: string, pid: int, ppid: int) : identity;
 
         global sync_identity: function(index: string, node: string) : Info;
         global copy_identity: function(index: string, node: string) : Info;
 
         global update_action: function(i: Info);
         global build_identity: function(auid: string, uid: string, gid: string, euid: string, egid: string, fsuid: string, fsgid: string, suid: string, sgid: string) : vector of string;
-        global update_identity: function(ses: int, node: string, tvid: vector of string) : count;
+	global activate_id_test: function(ses: int, node: string) : count;
+	global disable_id_test: function(ses: int, node: string) : count;
+        global update_identity: function(ses: int, node: string, pid: int, ppid: int, tvid: vector of string) : count;
 
         global delete_item: event(key: string);
         global delete_action: function(index: string, node: string);
@@ -331,10 +337,6 @@ function get_identity_id(ses: int, node: string) : string
 {
         # This function returns the identity-id (huh?!?)
         local ret = INFO_NULL;
-        #if ( ses == -1 )
-        #       ret = fmt("%s%s", auid, node);
-        #else
-        #       ret = fmt("%s%s", ses, node);
         ret = fmt("%s%s", ses,node);
         return ret;
 }
@@ -371,13 +373,20 @@ function get_action_obj(index: string, node: string) : Info
 } # end get_action_obj
 
 
-function get_identity_obj(ses: int, auid: string, node: string) : identity
+function get_identity_obj(ses: int, node: string, pid: int, ppid: int) : identity
 {
         local key = get_identity_id(ses, node);
         local t_identity: identity;
 
         if ( key in identityState )
                 t_identity = identityState[key];
+	#else {
+	#	# Look up the identity of the parent object instead
+        #	local alt_key = get_identity_id(ses, node, ppid);
+
+	#	if ( alt_key in identityState )
+        #        	t_identity = identityState[alt_key];
+	#	}
 
         return t_identity;
 } # end get_identity_obj
@@ -514,7 +523,7 @@ function copy_identity(index: string, node: string) : Info
 {
         # Take identity and sync it with the action structure
         local t_Info = get_action_obj(index,node);
-        local t_identity = get_identity_obj(t_Info$ses, t_Info$i$idv[v_auid], t_Info$node);
+        local t_identity = get_identity_obj(t_Info$ses, t_Info$node, t_Info$pid, t_Info$ppid);
 
         t_Info$i = t_identity;
         return t_Info;
@@ -524,7 +533,7 @@ function sync_identity(index: string, node: string) : Info
 {
         # Take identity and sync it with the action structure
         local t_Info = get_action_obj(index,node);
-        local t_identity = get_identity_obj(t_Info$ses, "0", t_Info$node);
+        local t_identity = get_identity_obj(t_Info$ses, t_Info$node, t_Info$pid, t_Info$ppid);
 
         t_Info$i = t_identity;
 
@@ -599,7 +608,43 @@ function build_identity(auid: string, uid: string, gid: string, euid: string, eg
         return t_idv;
 }
 
-function update_identity(ses: int, node: string, tvid: vector of string) : count
+function activate_id_test(ses: int, node: string) : count
+{
+	local key = get_identity_id(ses, node);
+	local t_identity: identity;
+
+	if ( key == INFO_NULL )
+		return 2;
+
+	if ( key in identityState ) {
+		t_identity = identityState[key];
+		}
+
+	++t_identity$id_test;
+
+	identityState[key] = t_identity;
+	return 0;
+}
+
+function disable_id_test(ses: int, node: string) : count
+{
+	local key = get_identity_id(ses, node);
+	local t_identity: identity;
+
+	if ( key == INFO_NULL )
+		return 2;
+
+	if ( key in identityState ) {
+		t_identity = identityState[key];
+		}
+
+	t_identity$id_test = 0;
+
+	identityState[key] = t_identity;
+	return 0;
+}
+
+function update_identity(ses: int, node: string, pid: int, ppid: int, tvid: vector of string) : count
 {
         # Update values for the identity object.  If the obj is not in the
         #   identityState table, create it
@@ -652,3 +697,9 @@ event delete_item(key: string)
 }
 
 
+event bro_init()
+{
+#	if ( AUDITD_IN_STREAM::DATANODE )
+#		schedule measure_interval { measure() };
+
+}
