@@ -11,6 +11,7 @@
 #       legitimate account.
 #
 @load auditd_policy/util
+@load host_core/health_check
 
 @load frameworks/communication/listen
 @load base/frameworks/input
@@ -18,6 +19,11 @@
 module AUDITD_IN_STREAM;
 
 export {
+
+        redef enum Notice::Type += {
+                AUDITD_INPUT_LowTransactionRate,
+                AUDITD_INPUT_HighTransactionRate,
+                };
 
 	redef InputAscii::empty_field = "EMPTY";
 	global kv_splitter: pattern = / /;
@@ -31,6 +37,20 @@ export {
 	const DATANODE = F &redef;
 
 	const dispatcher: table[string] of function(_data: string): count &redef;
+
+        # track the transaction rate - notice on transition between low and high water rates
+        # this is count per input_test_interval
+        const input_count_test = T &redef;
+        const input_low_water:count = 1 &redef;
+        const input_high_water:count = 10000 &redef;
+        const input_test_interval:interval = 60 sec &redef;
+        # track input rate ( events/input_test_interval)
+        global input_count: count = 1 &redef;
+        global input_count_prev: count = 1 &redef;
+        global input_count_delta: count = 0 &redef;
+        #  0=pre-init, 1=ok, 2=in low error
+        global input_count_state: count = 0 &redef;
+
 	}
 
 function execve_f(data: string) : count
@@ -255,6 +275,7 @@ event line(description: Input::EventDescription, tpe: Input::Event, LV: lineVals
 	{
 	# Each line is fed to this event where it is digested and sent to the dispatcher 
 	#  for appropriate processing
+	++input_count;
 
 	# Data line looks like:
 	# 9:1 SYSCALL_OBJ SYSCALL 1357669891.416 mndlint01 ...
@@ -276,17 +297,81 @@ event line(description: Input::EventDescription, tpe: Input::Event, LV: lineVals
 
 	}
 
+event transaction_rate()
+        {
+        # Values for input_count_state:
+        #  0=pre-init, 1=ok, 2=in error
+        # We make the assumption here that the low_water < high_water
+        # Use a global for input_count_delta so that the value is consistent across
+        #   anybody looking at it.
+        input_count_delta = input_count - input_count_prev;
+        #print fmt("%s Log delta: %s", network_time(),delta);
 
-event init_datastream()
+        # rate is too low - send a notice the first time
+        if (input_count_delta <= input_low_water) {
+
+                # only send the notice on the first instance
+                if ( input_count_state != 2 ) {
+                        NOTICE([$note=AUDITD_INPUT_LowTransactionRate,
+                                $msg=fmt("event rate %s per %s", input_count_delta, input_test_interval)]);
+
+                        input_count_state = 2; # 2: transaction rate
+                        }
+
+                # Now reset the reader
+                #schedule 1 sec { stop_reader() };
+                #schedule 10 sec { start_reader() };
+                }
+
+        # rate is too high - send a notice the first time
+        if (input_count_delta >= input_high_water) {
+
+                # only send the notice on the first instance
+                if ( input_count_state != 2 ) {
+                        NOTICE([$note=AUDITD_INPUT_HighTransactionRate,
+                                $msg=fmt("event rate %s per %s", input_count_delta, input_test_interval)]);
+
+                        input_count_state = 2; # 2: transaction rate
+                        }
+                }
+
+        # rate is ok
+        if ( (input_count_delta > input_low_water) && (input_count_delta < input_high_water) ) {
+                input_count_state = 1;
+                }
+
+        # rotate values
+        input_count_prev = input_count;
+
+	local thh: HOST_HEALTH::Info;
+
+	thh$ts = network_time();
+	thh$origin = "AUDITD";
+	thh$recPerSec = input_count_delta;
+	thh$longLive = |AUDITD_CORE::identityState|;
+	thh$shortLive = |AUDITD_CORE::actionState|;
+
+	Log::write(HOST_HEALTH::LOG, thh);
+
+        # reschedule this all over again ...
+        #if ( DATANODE )
+        #	schedule input_test_interval { transaction_rate() };
+        }
+
+
+function init_datastream()
 	{
 	if ( DATANODE && (file_size(data_file) != -1.0) ) {
 		Input::add_event([$source=data_file, $reader=Input::READER_RAW, $mode=Input::TSTREAM, $name="auditd", $fields=lineVals, $ev=line]);
+
+		# start rate monitoring for event stream
+		#schedule input_test_interval { transaction_rate() };
 		}	
 
 	}
 
 event bro_init()
 	{
-	schedule 1 sec { init_datastream() };
+	init_datastream();
 	}
 
