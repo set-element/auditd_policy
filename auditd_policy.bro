@@ -25,6 +25,7 @@ export {
 		AUDITD_SocketOpen,
 		AUDITD_ExecPathcheck,
 		AUDITD_Longtime,
+		AUDITD_FileMetadata,
 		};
 
 	# tag for file loaded
@@ -88,7 +89,7 @@ export {
 	global auditd_syscall: function(i: AUDITD_CORE::Info);
 	global auditd_user: function(i: AUDITD_CORE::Info);
 
-	global identity_time_test: event(ses: int, node: string, n: int, exe: string);
+	global identity_time_test: event(ses: int, node: string, n: int, exe: string, did: string);
 	## Execution configuration ##
 
 	# blacklist of directories which 
@@ -102,6 +103,27 @@ export {
 	global identity_transition_wl: table[string] of string &redef;
 	global ExeWhitelist: set[string] &redef;
 	global UpList = set("root") &redef;
+
+	# File system metadata
+	# Table, indexed by identity, which tracks aggrigate filesystem activity
+	type fileMetaData: record {
+		open_error: count &default=0;
+		open_error_set: string &default="";
+		create_error: count &default=0;
+		create_error_set: string &default="";
+		mod_error: count &default=0;
+		mod_error_set: string &default="";
+		delete_error: count &default=0;
+		delete_error_set: string &default="";
+		};
+
+	global fileMetaDataTable: table[string] of fileMetaData;
+
+	global SYS_FILE_OPEN_THRESHOLD = 5 &redef;
+	global SYS_FILE_CREATE_THRESHOLD = 5 &redef;
+	global SYS_FILE_MOD_THRESHOLD = 5 &redef;
+	global SYS_FILE_DELETE_THRESHOLD = 5 &redef;
+	
 
 	} # end export
 		
@@ -396,6 +418,85 @@ function network_register_conn(i: AUDITD_CORE::Info) : count
 	}
 
 
+function file_error(inf: AUDITD_CORE::Info)
+	{
+	# AUDITD_FileMetadata
+	#
+
+	local t_fmd: fileMetaData;
+	local id = AUDITD_CORE::get_identity_id(inf$ses, inf$node);
+
+	if ( id in fileMetaDataTable ) {
+		t_fmd = fileMetaDataTable[id];
+		}
+
+	switch ( inf$key ) {
+
+		case "SYS_FILE_OPEN_ERR":
+
+			if ( t_fmd$open_error < SYS_FILE_OPEN_THRESHOLD ) 
+				t_fmd$open_error_set = fmt("%s %s/%s", t_fmd$open_error_set, inf$cwd, inf$path_name);
+
+			if ( ++t_fmd$open_error == SYS_FILE_OPEN_THRESHOLD ) {
+				NOTICE([$note=AUDITD_FileMetadata,
+					$msg=fmt("SYS_FILE_OPEN_ERR %s %s %s errors %s", inf$ses, inf$i$idv[1], SYS_FILE_OPEN_THRESHOLD, t_fmd$open_error_set )]);
+				}
+			break;
+
+		case "SYS_FILE_CREATE_ERR":
+
+			if ( t_fmd$create_error < SYS_FILE_CREATE_THRESHOLD ) 
+				t_fmd$create_error_set = fmt("%s %s/%s", t_fmd$create_error_set, inf$cwd, inf$path_name);
+
+			if ( ++t_fmd$create_error == SYS_FILE_CREATE_THRESHOLD ) {
+				NOTICE([$note=AUDITD_FileMetadata,
+					$msg=fmt("SYS_FILE_CREATE_ERR %s %s %s errors %s", inf$ses, inf$i$idv[1], SYS_FILE_CREATE_THRESHOLD, t_fmd$create_error_set )]);
+				}
+			break;
+
+		case "SYS_FILE_MOD_ERR":
+
+			if ( t_fmd$mod_error < SYS_FILE_MOD_THRESHOLD ) 
+				t_fmd$mod_error_set = fmt("%s %s/%s", t_fmd$mod_error_set, inf$cwd, inf$path_name);
+
+			if ( ++t_fmd$mod_error == SYS_FILE_MOD_THRESHOLD ) {
+				NOTICE([$note=AUDITD_FileMetadata,
+					$msg=fmt("SYS_FILE_MOD_ERR %s %s %s errors %s", inf$ses, inf$i$idv[1], SYS_FILE_MOD_THRESHOLD, t_fmd$mod_error_set )]);
+				}
+			break;
+
+		case "SYS_FILE_PERM_ERR":
+
+			if ( t_fmd$mod_error < SYS_FILE_MOD_THRESHOLD ) 
+				t_fmd$mod_error_set = fmt("%s %s/%s", t_fmd$mod_error_set, inf$cwd, inf$path_name);
+
+			if ( ++t_fmd$mod_error == SYS_FILE_MOD_THRESHOLD ) {
+				NOTICE([$note=AUDITD_FileMetadata,
+					$msg=fmt("SYS_FILE_MOD_ERR %s %s %s errors %s", inf$ses, inf$i$idv[1], SYS_FILE_MOD_THRESHOLD, t_fmd$mod_error_set )]);
+				}
+			break;
+
+		case "SYS_FILE_DELETE_ERR":
+
+			if ( t_fmd$delete_error < SYS_FILE_DELETE_THRESHOLD ) 
+				t_fmd$delete_error_set = fmt("%s %s/%s", t_fmd$delete_error_set, inf$cwd, inf$path_name);
+
+			if ( ++t_fmd$delete_error == SYS_FILE_DELETE_THRESHOLD ) {
+				NOTICE([$note=AUDITD_FileMetadata,
+					$msg=fmt("SYS_FILE_DELETE_ERR %s %s %s errors %s", inf$ses, inf$i$idv[1], SYS_FILE_DELETE_THRESHOLD, t_fmd$delete_error_set )]);
+				}
+			break;
+
+		default:
+			break;
+
+		}
+
+	fileMetaDataTable[id] = t_fmd;
+
+	}
+
+
 # Look for a unexpected transformation of the identity subvalues
 #  returning a vector of changes.
 #
@@ -429,8 +530,9 @@ function process_identity(inf: AUDITD_CORE::Info) : vector of string
 
 	# even for legitimate records we will only be looking at identity transition between 
 	#   USER_START and USER_END record types	
+	# The test for > 1000 as well provides a dynamic lock to keep user drift off
 	#
-	if ( inf$i$id_test < 2 ) {
+	if ( (inf$i$id_test < 2) || (inf$i$id_test > 1000) ) {
 		#print fmt("ID check skip: id_test==F");	
 		return ret_val;
 		}
@@ -453,7 +555,8 @@ function process_identity(inf: AUDITD_CORE::Info) : vector of string
 				inf$i$id_flag[ndx] = T;
 				# see if exec is in white list, else run timer test
 				if ( inf$exe ! in ExeWhitelist ) {
-					schedule 2 sec { AUDITD_POLICY::identity_time_test(inf$ses, inf$node, ndx, inf$exe) };
+					local did = fmt("%s -> %s", inf$i$p_idv[ndx], inf$i$idv[ndx]);
+					schedule 5 sec { AUDITD_POLICY::identity_time_test(inf$ses, inf$node, ndx, inf$exe, did) };
 					}
 
 				#print fmt(" dID UP: %s %s->%s", AUDITD_CORE::translate_id(ndx), inf$i$p_idv[ndx], inf$i$idv[ndx]);
@@ -586,7 +689,7 @@ function process_wrapper(inf: AUDITD_CORE::Info) : count
 #      Events
 ### ----- # ----- ###
 
-event identity_time_test(ses: int, node: string, n: int, exe: string)
+event identity_time_test(ses: int, node: string, n: int, exe: string, did: string)
 	{
 	local t_id = AUDITD_CORE::get_identity_id(ses, node);
 
@@ -597,11 +700,8 @@ event identity_time_test(ses: int, node: string, n: int, exe: string)
 		# test if currently in elevated state
 		if ( t_idState$id_flag[n] ) {
 
-			local id = t_idState$idv[n];
-			local p_id = t_idState$p_idv[n];
-	
 			NOTICE([$note=AUDITD_IDTransform,
-				$msg = fmt("%s %s %s -> %s %s", node, AUDITD_CORE::translate_id(n), id, p_id, exe)]);
+				$msg = fmt("%s %s %s %s", node, AUDITD_CORE::translate_id(n), did, exe)]);
 
 			}
 
@@ -639,62 +739,89 @@ function auditd_policy_dispatcher(inf: AUDITD_CORE::Info)
 
 	# Initial filtering based on action and key values
 	#  ex: {PLACE_OBJ, PATH} .
-	#process_wrapper(inf);
-	# Key is from audit.rules
+	# Key is defined in audit.rules
 	#
 	local action = inf$action;
 	local key    = inf$key;
-	local syscall = inf$syscall;	
+	local syscall = inf$syscall;		
+
+	local net_syscall_set = set( "connect", "bind", "listen", "socket", "socketpair", "accept", "accept4") &redef;
+	local file_error_set = set( "SYS_FILE_OPEN_ERR", "SYS_FILE_CREATE_ERR", "SYS_FILE_MOD_ERR", "SYS_FILE_DELETE_ERR", "SYS_FILE_PERM_ERR" ) &redef;
 
         switch ( action ) {
         case "EXECVE":
 		process_wrapper(inf);
                 break;
+
         case "GENERIC":
 		process_wrapper(inf);
                 break;
+
         case "PLACE":
                 break;
+
         case "SADDR":
 		# the SADDR data will be passed over in the network system
 		#  call information.
 		#
                 break;
+
         case "SYSCALL":
+		# A great deal of heavy lifting takes place in the SYSCALL action type
+		#
 		process_wrapper(inf);
-		switch( syscall ) {
-			### ----- ## ----- ####
-			# from syscalls: bind, connect, accept, accept4, listen, socketpair, socket
-			# key: SYS_NET
-			case "connect":		# initiate a connection on a socket (C/S)
-				syscall_connect(inf);
-				network_register_conn(inf);
-				break;
-			case "bind": 		# bind a name/address to a socket (S)
-				syscall_bind(inf);
-				break;
-			case "listen":		# listen for connections on a socket (S)
-				syscall_listen(inf);
-				network_register_listener(inf);
-				break;
-			case "socket":		# create an endpoint for communication (C/S)
-				syscall_socket(inf);
-				break;
-			case "socketpair":	# create a pair of connected sockets (C/S)
-				syscall_socket(inf);
-				break;
-			case "accept":		# accept a connection on a socket (S)
-				break;
-			case "accept4":		#  accept a connection on a socket (S)
-				break;
-			### ----- ## ----- ####
-			# 
-			case "execve":
-				break;
-			default:
-        		        break;
+
+		# Process successful network related system calls
+		#
+		if ( (syscall in net_syscall_set) and (inf$key == "SYS_NET") ) { 
+			switch( syscall ) {
+				### ----- ## ----- ####
+				# from syscalls: bind, connect, accept, accept4, listen, socketpair, socket
+				# key: SYS_NET
+				case "connect":		# initiate a connection on a socket (C/S)
+					syscall_connect(inf);
+					network_register_conn(inf);
+					break;
+				case "bind": 		# bind a name/address to a socket (S)
+					syscall_bind(inf);
+					break;
+				case "listen":		# listen for connections on a socket (S)
+					syscall_listen(inf);
+					network_register_listener(inf);
+					break;
+				case "socket":		# create an endpoint for communication (C/S)
+					syscall_socket(inf);
+					break;
+				case "socketpair":	# create a pair of connected sockets (C/S)
+					syscall_socket(inf);
+					break;
+				case "accept":		# accept a connection on a socket (S)
+					break;
+				case "accept4":		#  accept a connection on a socket (S)
+					break;
+			
+       			        break;
+
+				} # end net_syscall_set switch
+
 			}
-			break;
+
+		# File system related activities re key names:
+		# SYS_FILE_OPEN : open error EACCES|EPERM
+		# SYS_FILE_CREATE : new file/dir/link/dev error EACCES|EPERM
+		# SYS_FILE_MOD_FAIL : modify fail error EACCES|EPERM
+		# SYS_FILE_DELETE_FAIL : delete error EACCES|EPERM
+		#
+		# SYS_FILE_PERM : set perms on file/dir/etc
+		# SYS_FILE_XPERM : set extended attributes on file/dir/etc
+		#
+
+		if ( key in file_error_set ) {
+			#print fmt("KEY PASS: %s", key);
+			file_error(inf);
+			}
+
+		break;
         case "USER":
 		#process_wrapper(inf);
                 break;
