@@ -1,4 +1,5 @@
 # util.bro  Scott Campbell 11/29/13
+	
 # 
 # Various utility functions and constants used throughout the auditd infrastructure
 #  scripts.  For the time being this is not part of any particular name space 
@@ -158,6 +159,7 @@ export {
 
         global update_action: function(i: Info);
         global build_identity: function(auid: string, uid: string, gid: string, euid: string, egid: string, fsuid: string, fsgid: string, suid: string, sgid: string) : vector of string;
+	global lock_id_test: function(ses: int, node: string) : count;
 	global activate_id_test: function(ses: int, node: string) : count;
 	global disable_id_test: function(ses: int, node: string) : count;
         global update_identity: function(ses: int, node: string, pid: int, ppid: int, tvid: vector of string) : count;
@@ -608,6 +610,26 @@ function build_identity(auid: string, uid: string, gid: string, euid: string, eg
         return t_idv;
 }
 
+# This function locks the identity checking out for a given session
+#
+function lock_id_test(ses: int, node: string) : count
+{
+	local key = get_identity_id(ses, node);
+	local t_identity: identity;
+
+	if ( key == INFO_NULL )
+		return 2;
+
+	if ( key in identityState ) {
+		t_identity = identityState[key];
+		}
+
+	t_identity$id_test = 10000;
+
+	identityState[key] = t_identity;
+	return 0;
+}
+
 function activate_id_test(ses: int, node: string) : count
 {
 	local key = get_identity_id(ses, node);
@@ -638,7 +660,12 @@ function disable_id_test(ses: int, node: string) : count
 		t_identity = identityState[key];
 		}
 
-	t_identity$id_test = 0;
+	if ( t_identity$id_test > 1 ) {
+		--t_identity$id_test;
+		}
+	else {
+		t_identity$id_test = 0;
+		}
 
 	identityState[key] = t_identity;
 	return 0;
