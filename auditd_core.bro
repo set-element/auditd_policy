@@ -20,6 +20,7 @@ export {
 	# AUDITD_CORE log stream identifier
 	redef enum Log::ID += { LOG };
 
+	global idLibraryWhitelist: set[string] = set("/usr/sbin/crond") &redef;
 	}
 
 event auditd_execve(index: string, action: string, ts: time, node: string, ses: int, pid: int, argc: int, argument: string)
@@ -372,13 +373,16 @@ event auditd_user(index: string, action: string, ts: time, node: string, ses: in
 	# turn on/off identity transition checking
 	if ( action == "USER_START" )
 		{
-		print fmt("activate id test for %s", uid);
+		if ( exe in idLibraryWhitelist ) {
+			lock_id_test(ses, node);
+			}
+
 		activate_id_test(ses, node);
 		}
 
 	if ( action == "USER_END" ) 
 		{
-		print fmt("disable id test for %s", uid);
+		#print fmt("disable id test for %s", uid);
 		disable_id_test(ses, node); 
 		}
 
