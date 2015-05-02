@@ -18,6 +18,8 @@ module AUDITD_POLICY;
 #module AUDITD_CORE;
 
 export {
+	redef enum Log::ID += { LOGCONN };
+	redef enum Log::ID += { LOGLIST };
 
 	redef enum Notice::Type += {
 		AUDITD_IDTransform,
@@ -26,11 +28,14 @@ export {
 		AUDITD_ExecPathcheck,
 		AUDITD_Longtime,
 		AUDITD_FileMetadata,
+		AUDITD_POLICY_UserLocation,
 		};
 
 	# tag for file loaded
 	const AUDITD_POLICY_LOAD = T;
 
+	# socket_data is struct to maintain state across the (con/de)struction
+	#   of network related system calls.
         type socket_data: record {
                 domain: string &default="NULL";         # UNIX/INET
                 s_type: string &default="NULL";         # STREAM/DGRAM
@@ -49,6 +54,21 @@ export {
         #          3 = bind|listen  -> create listener
         #          4 = accept       -> listener connect
         #    
+
+	# connection_log is a logging construct that holds some of the socket_data
+	#  info as well as type fixed data like addr/port and identity info
+	type connection_log: record {
+		cid: conn_id &log;
+		protocol: string &default="NULL" &log;
+		state: count &default=0;
+		ses: int &default=0 &log;
+		node: string &default="NULL" &log;
+		uid: string &default="NULL" &log;
+		gid: string &default="NULL" &log;
+		euid: string &default="NULL" &log;
+		egid: string &default="NULL" &log;
+		};
+
 
 	# List of identities which are consitered ok to be seen translating
 	#  between one another.
@@ -90,19 +110,34 @@ export {
 	global auditd_user: function(i: AUDITD_CORE::Info);
 
 	global identity_time_test: event(ses: int, node: string, n: int, exe: string, did: string);
-	## Execution configuration ##
-
-	# blacklist of directories which 
+	# # Execution configuration ##
+	# blacklist of suspicous execution bases
 	global exec_blacklist = /^\/dev/ | /^\/var\/run/ &redef;
 	global exec_blacklist_test = T &redef;
 	
 	# identiy related configs
 	global identity_drift_test = T &redef;
+	global id_test_delay: interval = 5 sec &redef;
 	
 	# Table of allowed identity transitions
 	global identity_transition_wl: table[string] of string &redef;
 	global ExeWhitelist: set[string] &redef;
 	global UpList = set("root") &redef;
+
+
+	# # Network metadata
+	#  here metadata can be both unix socket or inet
+	type connMetaData: record {
+		bind_err_count: count &default=0;
+		socket_err_count: count &default=0;
+		conenct_err_count: count &default=0;
+		};
+
+	global connMetaDataTable: table[string] of connMetaData;
+
+	global SYS_NET_BIND_THRESHOLD =    1 &redef;
+	global SYS_NET_SOCKET_THRESHOLD =  1 &redef;
+	global SYS_NET_CONNECT_THRESHOLD = 1 &redef;
 
 	# File system metadata
 	# Table, indexed by identity, which tracks aggrigate filesystem activity
@@ -124,6 +159,10 @@ export {
 	global SYS_FILE_MOD_THRESHOLD = 5 &redef;
 	global SYS_FILE_DELETE_THRESHOLD = 5 &redef;
 	
+	# should we have a blacklist of where users should not be poking around - ie cwd
+	global run_location_check = T &redef;
+	global location_blacklist = /^\/boot/ &redef;
+
 
 	} # end export
 		
@@ -163,41 +202,45 @@ function identity_atomic(old_id: string, new_id: string): bool
 function syscall_socket(inf: AUDITD_CORE::Info) : count
 	{
 	# socket(int domain, int type, int protocol);
-	#  a0: domain: PF_LOCAL/PF_UNIX/PF_INET
-	#  a1: type: SOCK_STREAM/SOCK_DATAGRAM/SOCK_RAW
+	#  a0: domain: PF_LOCAL|PF_UNIX=1  PF_INET=2  PF_INET6=10
+	#  a1: type: SOCK_STREAM=1    SOCK_DATAGRAM=2   SOCK_RAW=3
 	#
 	# This info will have been extracted out in the saddr part of the auditd analysis
 	#
-	# Function test for socket exist.
-	# If none, create; if exist, test dt 
 	local ret_val = 0;
 	local t_socket_data: socket_data;
 
 	local index = fmt("%s%s", inf$ses, inf$node);
 
-	# If the policy is set to only look at TCP connections
-	#  return with 0
-	#
-	#
-	#FIX THIS!
-	#if ( AUDITD_NET::filter_tcp_only && ((inf$a0 != "inet") || ( inf$a1 != "SOCK_STREAM")))
-	#	return ret_val;
+	# identify domain, bail if not an inet varient
+	#if ( inf$a0 == "1" ) {
+	#	t_socket_data$domain = "PF_UNIX";
+	#	}
+	#else if ( inf$a0 == "2" ) { 	
+	if ( inf$a0 == "2" ) { 	
+		t_socket_data$domain = "PF_INET";
+		}
+	else if ( inf$a0 == "10" ) {
+		t_socket_data$domain = "PF_INET6";
+		}
+	else
+		return ret_val;
 
-	t_socket_data$domain = inf$a0;
-	t_socket_data$s_type = inf$a1;
+	# identify type, bail if not wanted
+	if ( inf$a1 == "1" ) {
+		t_socket_data$s_type = "SOCK_STREAM";
+		}
+	else if ( inf$a1 == "2" ) {
+		t_socket_data$s_type = "SOCK_DGRAM";
+		}
+	else 
+		return ret_val;
+	
 	t_socket_data$ts = inf$ts;
 	t_socket_data$state = 1;
 	
-	if ( index !in socket_lookup ) {
-
-		ret_val = 1;
-		socket_lookup[index] = t_socket_data;
-
-		}
-	else {
-		# skip for now
-		ret_val = 2;
-		}
+	ret_val = 1;
+	socket_lookup[index] = t_socket_data;
 
 	return ret_val;
 	} # syscall_socket end
@@ -207,6 +250,9 @@ function syscall_bind(inf: AUDITD_CORE::Info) : count
 	{
 	# bind(int socket, const struct sockaddr *address, socklen_t address_len);
 	# From the saddr component, we can get the source IP and port ...
+	# if the socket has not been already registered, skip further processing since
+	#   there will not be enough data available to make for a meaningful record
+	#
 	local ret_val = 0;
 	local t_socket_data: socket_data;
 
@@ -214,11 +260,14 @@ function syscall_bind(inf: AUDITD_CORE::Info) : count
 
 	if ( index in socket_lookup )
 		t_socket_data = socket_lookup[index];
+	else
+		return ret_val;
 
 	t_socket_data$o_addr_info = inf$s_host;
 	t_socket_data$o_port_info = inf$s_serv;
 	t_socket_data$ts = inf$ts;
 	t_socket_data$state = 3;
+	ret_val = 1;
 		
 	socket_lookup[index] = t_socket_data;
 
@@ -237,12 +286,15 @@ function syscall_connect(inf: AUDITD_CORE::Info) : count
 
 	if ( index in socket_lookup )
 		t_socket_data = socket_lookup[index];
+	else
+		return ret_val;
 
 	t_socket_data$r_addr_info = inf$s_host;
 	t_socket_data$r_port_info = inf$s_serv;
 	t_socket_data$ts = inf$ts;
 	t_socket_data$state = 3;
-		
+	ret_val = 1;
+
 	socket_lookup[index] = t_socket_data;
 
 	return ret_val;
@@ -260,19 +312,22 @@ function syscall_listen(inf: AUDITD_CORE::Info) : count
 
 	if ( index in socket_lookup )
 		t_socket_data = socket_lookup[index];
+	else
+		return ret_val;
 
 	t_socket_data$o_addr_info = inf$s_host;
 	t_socket_data$o_port_info = inf$s_serv;
 	t_socket_data$ts = inf$ts;
 	t_socket_data$state = 3;
-		
+	ret_val = 1;
+	
 	socket_lookup[index] = t_socket_data;
 
 	return ret_val;
 	} # syscall_listen end
 
 
-function network_register_listener(i: AUDITD_CORE::Info) : count
+function network_register_listener(inf: AUDITD_CORE::Info) : count
 	{
 	# This captures data from the system calls bind() and
 	#  accept() and checks to see if the system in question already
@@ -285,10 +340,14 @@ function network_register_listener(i: AUDITD_CORE::Info) : count
 	local ret_val = 0;
 	local t_socket_data: socket_data;
 	local cid: conn_id;
+	local conn_log: connection_log;
 
-	print fmt("NET REGISTER LISTENER");
+	# For the time being we focus on succesful connect() syscalls - in
+	#  this event the "error" code will be 0.
+	if ( to_int(inf$ext) != 0 )
+		return ret_val;
 
-	local index = fmt("%s%s", i$ses, i$node);
+	local index = fmt("%s%s", inf$ses, inf$node);
 
 	if ( index in socket_lookup )
 		t_socket_data = socket_lookup[index];
@@ -296,84 +355,101 @@ function network_register_listener(i: AUDITD_CORE::Info) : count
 		return ret_val;
 
 	# sanity check the data
-	if ( t_socket_data$domain != "inet" || t_socket_data$domain != "inet6" )
+	if ( t_socket_data$domain == "PF_INET" || t_socket_data$domain == "PF_INET6" ) {
+		ret_val = 1;
+		}
+	else {
 		return ret_val;
+		}
 
-	if ( (t_socket_data$o_addr_info == "NULL") || (t_socket_data$o_port_info == "NULL"))
+	if ( (t_socket_data$r_addr_info == "NULL") || (t_socket_data$r_port_info == "NULL")) {
 		return ret_val;
+		}
 
 	ret_val = 1;
 
-	# now if there is sufficient information in the socket_data structure we
-	#  have enjoyed it long enough and should pass it off to the server object
-	#  holding all the info on this system
-	#
-	# Build a conn_id and hand it off w/ identity info
 	local ptype = "NULL";
 
 	if ( t_socket_data$s_type == "SOCK_STREAM" )
 		ptype = "tcp";
 	else
-		# assume this for now ...
 		ptype = "udp";
 
 	# test and create the port sets
-	# orig ports
-	cid$orig_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$o_port_info, ptype));
-
-	# resp ports
+	#  resp ports
 	if ( t_socket_data$r_port_info != "NULL" )
-		cid$resp_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$r_port_info, ptype));
+		conn_log$cid$resp_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$r_port_info, ptype));
 	else
-		cid$resp_p = AUDITD_CORE::s_port( fmt("0/%s", ptype));
+		conn_log$cid$resp_p = AUDITD_CORE::s_port( fmt("0/%s", ptype));
+
+	# orig ports
+	if ( t_socket_data$o_port_info != "NULL" )
+		conn_log$cid$orig_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$o_port_info, ptype));
+	else
+		conn_log$cid$orig_p = AUDITD_CORE::s_port( fmt("0/%s", ptype));
 
 	# IP Addresses
-	# orig host
-	cid$orig_h = AUDITD_CORE::s_addr(t_socket_data$r_addr_info);
-
 	# resp host
 	if ( t_socket_data$r_addr_info != "NULL" )
-		cid$resp_h = AUDITD_CORE::s_addr(t_socket_data$r_addr_info);
+		conn_log$cid$resp_h = to_addr( fmt("%s", t_socket_data$r_addr_info) );
 	else
-		cid$resp_h = AUDITD_CORE::s_addr("0.0.0.0");
+		conn_log$cid$resp_h = to_addr("0.0.0.0");
 
-	# having built a prototype connection id, register it with the 
-	#  new socket systems policy
-	#SYSTEMS_DATA::new_socket(i,cid);
+	# orig host
+	if ( t_socket_data$o_addr_info != "NULL" )
+		conn_log$cid$orig_h = to_addr( fmt("%s", t_socket_data$o_addr_info) );
+	else
+		conn_log$cid$orig_h = to_addr("0.0.0.0");
+
+	conn_log$protocol = ptype;
+	conn_log$ses = inf$i$ses;
+	conn_log$node = inf$i$node;
+	conn_log$uid = inf$i$idv[AUDITD_CORE::v_uid];
+	conn_log$gid = inf$i$idv[AUDITD_CORE::v_gid];
+	conn_log$euid = inf$i$idv[AUDITD_CORE::v_euid];
+	conn_log$egid = inf$i$idv[AUDITD_CORE::v_egid]; 	
+
+	Log::write(LOGLIST, conn_log);
+	delete socket_lookup[index];
 
 	return ret_val;
 	}
 
 
-function network_register_conn(i: AUDITD_CORE::Info) : count
+function network_register_conn(inf: AUDITD_CORE::Info) : count
 	{
-	# This attempts to register outbound network connection data with a central correlator
-	#  in order to link the {user:conn} with the "real" netwok connection as seen by the 
-	#  external network facing bro.
+	# Log network connection data to assist in mapping user activity with 
+	#  an external network facing bro.
 	#
 	local ret_val = 0;
 	local t_socket_data: socket_data;
 	local cid: conn_id;
+	local conn_log: connection_log;
 
-	#print fmt("NET REGISTER CONN");
 	# For the time being we focus on succesful connect() syscalls - in
 	#  this event the "error" code will be 0.
-	if ( to_int(i$ext) != 0 )
+	if ( to_int(inf$ext) != 0 )
 		return ret_val;	
 
-	local index = fmt("%s%s", i$ses, i$node);
+	local index = fmt("%s%s", inf$ses, inf$node);
 
-	if ( index in socket_lookup )
+	if ( index in socket_lookup ) {
 		t_socket_data = socket_lookup[index];
+		}
 	else
 		return ret_val;
 
 	# sanity check the data
-	if ( t_socket_data$domain != "inet" || t_socket_data$domain != "inet6" )
+	if ( t_socket_data$domain == "PF_INET" || t_socket_data$domain == "PF_INET6" ) {
+		ret_val = 1;
+		}
+	else {
 		return ret_val;
+		}
 
-	if ( (t_socket_data$r_addr_info == "NULL") || (t_socket_data$r_port_info == "NULL"))
+	if ( (t_socket_data$r_addr_info == "NULL") || (t_socket_data$r_port_info == "NULL")) {
 		return ret_val;
+		}
 
 	ret_val = 1;
 
@@ -388,31 +464,41 @@ function network_register_conn(i: AUDITD_CORE::Info) : count
 
 	# test and create the port sets
 	# resp ports
-	cid$resp_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$r_port_info, ptype));
+	if ( t_socket_data$r_port_info != "NULL" )
+		conn_log$cid$resp_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$r_port_info, ptype));
+	else
+		conn_log$cid$resp_p = AUDITD_CORE::s_port( fmt("0/%s", ptype));
 
 	# orig ports
 	if ( t_socket_data$o_port_info != "NULL" )
-		cid$orig_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$o_port_info, ptype));
+		conn_log$cid$orig_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$o_port_info, ptype));
 	else
-		cid$orig_p = AUDITD_CORE::s_port( fmt("0/%s", ptype));
+		conn_log$cid$orig_p = AUDITD_CORE::s_port( fmt("0/%s", ptype));
 
 	# IP Addresses
 	# resp host
-	cid$resp_h = AUDITD_CORE::s_addr(t_socket_data$r_addr_info);
+	if ( t_socket_data$r_addr_info != "NULL" )
+		conn_log$cid$resp_h = to_addr( fmt("%s", t_socket_data$r_addr_info) );
+	else
+		conn_log$cid$resp_h = to_addr("0.0.0.0");
 
 	# orig host
-	if ( t_socket_data$r_addr_info != "NULL" )
-		cid$resp_h = AUDITD_CORE::s_addr(t_socket_data$r_addr_info);
+	if ( t_socket_data$o_addr_info != "NULL" )
+		conn_log$cid$orig_h = to_addr( fmt("%s", t_socket_data$o_addr_info) );
 	else
-		cid$resp_h = AUDITD_CORE::s_addr("0.0.0.0");
+		conn_log$cid$orig_h = to_addr("0.0.0.0");
 
-	#print fmt("NET REGISTER CONN %s", cid);
+	#conn_log$state = t_socket_data$state;
+	conn_log$protocol = ptype;
+	conn_log$ses = inf$i$ses;
+	conn_log$node = inf$i$node;
+	conn_log$uid = inf$i$idv[AUDITD_CORE::v_uid];
+	conn_log$gid = inf$i$idv[AUDITD_CORE::v_gid];
+	conn_log$euid = inf$i$idv[AUDITD_CORE::v_euid];
+	conn_log$egid = inf$i$idv[AUDITD_CORE::v_egid]; 	
 
-	# We have a conn_id more or less whicih gives us a 'what'
-	#  hand it off with the 'who' information to the connection
-	#  correlator.
-	# Still working on details ...
-	#AUDITD_NET::audit_conn_register(cid, i);
+	Log::write(LOGCONN, conn_log);
+	delete socket_lookup[index];
 
 	return 0;
 	}
@@ -556,7 +642,7 @@ function process_identity(inf: AUDITD_CORE::Info) : vector of string
 				# see if exec is in white list, else run timer test
 				if ( inf$exe ! in ExeWhitelist ) {
 					local did = fmt("%s -> %s", inf$i$p_idv[ndx], inf$i$idv[ndx]);
-					schedule 5 sec { AUDITD_POLICY::identity_time_test(inf$ses, inf$node, ndx, inf$exe, did) };
+					schedule id_test_delay { AUDITD_POLICY::identity_time_test(inf$ses, inf$node, ndx, inf$exe, did) };
 					}
 
 				#print fmt(" dID UP: %s %s->%s", AUDITD_CORE::translate_id(ndx), inf$i$p_idv[ndx], inf$i$idv[ndx]);
@@ -685,6 +771,24 @@ function process_wrapper(inf: AUDITD_CORE::Info) : count
 	return ret_val;
 	}
 
+function process_place(inf: AUDITD_CORE::Info) : count
+	{
+	# Look and see if location policy is active, if so process a quick check
+	#   against the curent blacklist
+	#
+	local ret_val = 0;
+
+	if ( run_location_check ) {
+		if ( location_blacklist in inf$cwd )
+
+		NOTICE([$note=AUDITD_POLICY_UserLocation,
+			$msg=fmt("user identity %s in %s", inf$i$idv, inf$cwd)]);
+	
+		}
+
+	return ret_val;
+	}
+
 ### ----- # ----- ###
 #      Events
 ### ----- # ----- ###
@@ -748,86 +852,97 @@ function auditd_policy_dispatcher(inf: AUDITD_CORE::Info)
 	local net_syscall_set = set( "connect", "bind", "listen", "socket", "socketpair", "accept", "accept4") &redef;
 	local file_error_set = set( "SYS_FILE_OPEN_ERR", "SYS_FILE_CREATE_ERR", "SYS_FILE_MOD_ERR", "SYS_FILE_DELETE_ERR", "SYS_FILE_PERM_ERR" ) &redef;
 
-        switch ( action ) {
-        case "EXECVE":
-		process_wrapper(inf);
-                break;
+	switch ( action ) {
+		case "EXECVE":
+			process_wrapper(inf);
+			break;
 
-        case "GENERIC":
-		process_wrapper(inf);
-                break;
+		case "GENERIC":
+			process_wrapper(inf);
+			break;
 
-        case "PLACE":
-                break;
+		case "PLACE":
+			# make sure user is not anywhere they are not supposed to be
+			process_place(inf); 
+			break;
 
-        case "SADDR":
-		# the SADDR data will be passed over in the network system
-		#  call information.
-		#
-                break;
+		case "SADDR":
+			# the SADDR data will be passed over in the network system
+			#  call information.
+			#
+			break;
 
-        case "SYSCALL":
-		# A great deal of heavy lifting takes place in the SYSCALL action type
-		#
-		process_wrapper(inf);
+		case "SYSCALL":
+			# A great deal of heavy lifting takes place in the SYSCALL action type
+			#
+			process_wrapper(inf);
 
-		# Process successful network related system calls
-		#
-		if ( (syscall in net_syscall_set) and (inf$key == "SYS_NET") ) { 
-			switch( syscall ) {
-				### ----- ## ----- ####
-				# from syscalls: bind, connect, accept, accept4, listen, socketpair, socket
-				# key: SYS_NET
-				case "connect":		# initiate a connection on a socket (C/S)
-					syscall_connect(inf);
-					network_register_conn(inf);
-					break;
-				case "bind": 		# bind a name/address to a socket (S)
-					syscall_bind(inf);
-					break;
-				case "listen":		# listen for connections on a socket (S)
-					syscall_listen(inf);
-					network_register_listener(inf);
-					break;
-				case "socket":		# create an endpoint for communication (C/S)
-					syscall_socket(inf);
-					break;
-				case "socketpair":	# create a pair of connected sockets (C/S)
-					syscall_socket(inf);
-					break;
-				case "accept":		# accept a connection on a socket (S)
-					break;
-				case "accept4":		#  accept a connection on a socket (S)
-					break;
-			
-       			        break;
+			# Process successful network related system calls
+			#
+			if ( (syscall in net_syscall_set) && (inf$key == "SYS_NET") ) { 
+				switch( syscall ) {
+					### ----- ## ----- ####
+					# from syscalls: bind, connect, accept, accept4, listen, socketpair, socket
+					# key: SYS_NET
+					case "connect":		# initiate a connection on a socket (C/S)
+						syscall_connect(inf);
+						network_register_conn(inf);
+						break;
+					case "bind": 		# bind a name/address to a socket (S)
+						syscall_bind(inf);
+						break;
+					case "listen":		# listen for connections on a socket (S)
+						syscall_listen(inf);
+						network_register_listener(inf);
+						break;
+					case "socket":		# create an endpoint for communication (C/S)
+						syscall_socket(inf);
+						break;
+					case "socketpair":	# create a pair of connected sockets (C/S)
+						syscall_socket(inf);
+						break;
+					case "accept":		# accept a connection on a socket (S)
+						break;
+					case "accept4":		#  accept a connection on a socket (S)
+						break;
+				
+       				        break;
+	
+					} # end net_syscall_set switch
+				}
 
-				} # end net_syscall_set switch
+			# File system related activities re key names:
+			# SYS_FILE_OPEN : open error EACCES|EPERM
+			# SYS_FILE_CREATE : new file/dir/link/dev error EACCES|EPERM
+			# SYS_FILE_MOD_FAIL : modify fail error EACCES|EPERM
+			# SYS_FILE_DELETE_FAIL : delete error EACCES|EPERM
+			#
+			# SYS_FILE_PERM : set perms on file/dir/etc
+			# SYS_FILE_XPERM : set extended attributes on file/dir/etc
+			#
 
-			}
-
-		# File system related activities re key names:
-		# SYS_FILE_OPEN : open error EACCES|EPERM
-		# SYS_FILE_CREATE : new file/dir/link/dev error EACCES|EPERM
-		# SYS_FILE_MOD_FAIL : modify fail error EACCES|EPERM
-		# SYS_FILE_DELETE_FAIL : delete error EACCES|EPERM
-		#
-		# SYS_FILE_PERM : set perms on file/dir/etc
-		# SYS_FILE_XPERM : set extended attributes on file/dir/etc
-		#
-
-		if ( key in file_error_set ) {
-			#print fmt("KEY PASS: %s", key);
-			file_error(inf);
-			}
-
-		break;
-        case "USER":
-		#process_wrapper(inf);
-                break;
-        }
+			if ( key in file_error_set ) {
+				#print fmt("KEY PASS: %s", key);
+				file_error(inf);
+				}
+			break;
+		case "USER":
+			#process_wrapper(inf);
+			break;
+        	}
 
 	
 
 	} # event end
 
+event bro_init()
+	{
+	Log::create_stream(AUDITD_POLICY::LOGCONN, [$columns=connection_log]);
+	local filter_c: Log::Filter = [$name="default", $path="auditd_connections"];
+	Log::add_filter(LOGCONN, filter_c);
+
+	Log::create_stream(AUDITD_POLICY::LOGLIST, [$columns=connection_log]);
+	local filter_l: Log::Filter = [$name="default", $path="auditd_listener"];
+	Log::add_filter(LOGLIST, filter_l);
+
+	}
