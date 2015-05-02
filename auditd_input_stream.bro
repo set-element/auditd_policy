@@ -160,6 +160,7 @@ function saddr_f(data: string) : count
 	{
 	# 1433:2 SADDR_OBJ SOCKADDR 1357670401.886 netlink%20pid%3A0
 	# 24142:2 SADDR_OBJ SOCKADDR 1357648977.688 inet%20host%3A208.45.140.197%20serv%3A80
+	# 6631974:2:2 SADDR_OBJ SOCKADDR 1430353738.133 orange-m.nersc.gov 64003 8055 inet%20host%3A127.0.0.1%20serv%3A53
 	local parts = split(data, kv_splitter);
 
 	if ( |parts| < 8 ) {
