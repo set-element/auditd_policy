@@ -84,7 +84,7 @@ event auditd_generic(index: string, action: string, ts: time, node: string, ses:
 	if ( int_test(pid) )
 		t_Info$pid = pid;
 
-	## ----- ##
+	# ----- #
 	
 	if ( string_test(comm) )
 		t_Info$comm = comm;
@@ -200,6 +200,8 @@ event auditd_saddr(index: string, action: string, ts: time, node: string, ses: i
 	local stype = split_saddr[1];
 	local host = split_saddr[2];
 
+	#print fmt("auditd_saddr saddr: %s", saddr);
+
 	if ( |split_saddr| > 2 ) {
 		local serv = split_saddr[3];
 		local t_serv = split( serv, /:/ );
@@ -219,6 +221,7 @@ event auditd_saddr(index: string, action: string, ts: time, node: string, ses: i
 		if ( string_test(t_serv[2]) )
 			t_Info$s_serv = t_serv[2];
 
+		print fmt("          INIT: %s %s %s", t_Info$s_type, t_Info$s_host, t_Info$s_serv);
 		}
 	else if ( stype == "local" ) {
 	
@@ -349,7 +352,7 @@ event auditd_user(index: string, action: string, ts: time, node: string, ses: in
 	if ( int_test(pid) )
 		t_Info$pid = pid;
 
-	## ----- ##
+	# ----- #
 
 	if ( string_test(msg) )
 		t_Info$msg = msg;
@@ -403,5 +406,7 @@ event auditd_user(index: string, action: string, ts: time, node: string, ses: in
 
 event bro_init() &priority = 5
 {
-	  Log::create_stream(AUDITD_CORE::LOG, [$columns=Info]);
+	Log::create_stream(AUDITD_CORE::LOG, [$columns=Info]);
+	local filter_c: Log::Filter = [$name="default", $path="auditd_core];
+	Log::add_filter(LOG, filter_c);
 }
