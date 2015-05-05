@@ -13,7 +13,7 @@ export {
 	# AUDITD_NET log stream identifier
 	redef enum Log::ID += { LOG };
 
-	### ----- Data Structs ----- ###
+	# ----- Data Structs ----- #
 	# Interesting problem here in that we are looking for
 	#   correlations between two partial conn_id objects.
 	#   [sip,sp] -> [dip,dp] :: index [dip,dp] of 
@@ -49,13 +49,13 @@ export {
 	global node_to_ip: table[string] of addr;
 	global ip_to_node: table[addr] of string;
 
-	### ----- Config and Constants----- ###
+	# ----- Config and Constants----- #
 	global filter_tcp_only = T &redef;
 	const AUDIT_DATA = 1;
 	const NET_DATA = 2;
 	global time_window:double = 2.0 &redef;
 
-	### ----- Event/Functions ----- ###
+	# ----- Event/Functions ----- #
 	# Value from audit side
 	global audit_conn_register: function(cid: conn_id, inf: AUDITD_CORE::Info) : count;
 	# Value from net side
@@ -68,9 +68,9 @@ export {
 	} # end export
 
 
-### ----- # ----- ###
+# ----- # ----- #
 #      Functions
-### ----- # ----- ###
+# ----- # ----- #
 function abs(d: double) : double
 	{
 	return sqrt(d*d);
@@ -226,9 +226,9 @@ function conn_collate(cid: conn_id, identity: string, _type: count, ts: time, no
 	} # end function
 
 } # ?!?!?!?!
-### ----- # ----- ###
+# ----- # ----- #
 #      Events
-### ----- # ----- ###
+# ----- # ----- #
 event bro_init() &priority = 5
 {
 	  Log::create_stream(AUDITD_NET::LOG, [$columns=AUDITD_CORE::Info]);
