@@ -35,6 +35,10 @@ export {
 	const data_file = "/home/bro/logs/RAW/AUDIT_DATA_0" &redef;
 	#const data_file = "/tmp/ad" &redef;
 	const DATANODE = F &redef;
+	# Offset controls the behavior of the file reader.  An offset of "-1" 
+	#   will behave like a "tail -0f" command, while a "0" will read the entire 
+	#   file before tailing it...
+	const data_file_offset = "-1";
 
 	const dispatcher: table[string] of function(_data: string): count &redef;
 
@@ -272,7 +276,7 @@ redef dispatcher += {
 	["USER_OBJ"] = user_f,
 	};
 
-event line(description: Input::EventDescription, tpe: Input::Event, LV: lineVals)
+event auditdLine(description: Input::EventDescription, tpe: Input::Event, LV: lineVals)
 	{
 	# Each line is fed to this event where it is digested and sent to the dispatcher 
 	#  for appropriate processing
@@ -363,7 +367,13 @@ event transaction_rate()
 function init_datastream()
 	{
 	if ( DATANODE && (file_size(data_file) != -1.0) ) {
-		Input::add_event([$source=data_file, $reader=Input::READER_RAW, $mode=Input::TSTREAM, $name="auditd", $fields=lineVals, $ev=line]);
+
+		local config_strings: table[string] of string = {
+			["offset"] = data_file_offset,
+			};
+
+		Input::add_event([$source=data_file, $config=config_strings, $reader=Input::READER_RAW, $mode=Input::STREAM, $name="auditd", $fields=lineVals, $ev=auditdLine]);
+
 
 		# start rate monitoring for event stream
 		#schedule input_test_interval { transaction_rate() };
