@@ -195,19 +195,19 @@ event auditd_saddr(index: string, action: string, ts: time, node: string, ses: i
 
 	# decode the saddr structure
 	local t_saddr = unescape_URI(saddr);
-	local split_saddr = split(t_saddr, / / );
+	local split_saddr = split_string(t_saddr, / / );
 
-	local stype = split_saddr[1];
-	local host = split_saddr[2];
+	local stype = split_saddr[0];
+	local host = split_saddr[1];
 
 	#print fmt("auditd_saddr saddr: %s", saddr);
 
 	if ( |split_saddr| > 2 ) {
-		local serv = split_saddr[3];
-		local t_serv = split( serv, /:/ );
+		local serv = split_saddr[2];
+		local t_serv = split_string( serv, /:/ );
 		}
 
-	local t_host = split( host, /:/ );
+	local t_host = split_string( host, /:/ );
 
 	# make decisions based on field 1
 	if ( stype == "inet" ) {
@@ -215,11 +215,11 @@ event auditd_saddr(index: string, action: string, ts: time, node: string, ses: i
 		if ( string_test(stype) )
 			t_Info$s_type = stype;
 
-		if ( string_test(t_host[2]) )
-			t_Info$s_host = t_host[2];
+		if ( string_test(t_host[1]) )
+			t_Info$s_host = t_host[1];
 
-		if ( string_test(t_serv[2]) )
-			t_Info$s_serv = t_serv[2];
+		if ( string_test(t_serv[1]) )
+			t_Info$s_serv = t_serv[1];
 
 		print fmt("          INIT: %s %s %s", t_Info$s_type, t_Info$s_host, t_Info$s_serv);
 		}
@@ -238,7 +238,7 @@ event auditd_saddr(index: string, action: string, ts: time, node: string, ses: i
 			t_Info$s_type = stype;
 
 		if ( string_test(t_host[2]) )
-			t_Info$s_host = t_host[2];
+			t_Info$s_host = t_host[1];
 		
 		}
 

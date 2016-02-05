@@ -323,11 +323,11 @@ function get_action_id(index: string, node: string) : string
         local ret = INFO_NULL;
 
         # take index value (a:b:c) and split it up
-        local i = split(index, /:/);
+        local i = split_string(index, /:/);
 
         # weed out corrupt data
         if ( |i| == 3 ) {
-                local i_major = to_count(i[1]);
+                local i_major = to_count(i[0]);
                 ret = fmt("%s%s", i_major, node);
                 }
 
@@ -405,9 +405,9 @@ function last_record(index: string): count
         local mpr = match_pattern(index, index_match);
 
         if ( mpr$matched ) {
-                local index_split = split(index, /:/);
+                local index_split = split_string(index, /:/);
 
-                if ( index_split[2] == index_split[3] )
+                if ( index_split[1] == index_split[2] )
                         ret = 1;
                 }
         else
