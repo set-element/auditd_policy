@@ -79,7 +79,7 @@ function abs(d: double) : double
 function audit_conn_register(cid: conn_id, inf: AUDITD_CORE::Info) : count
 	{
 	local ret_val = 0;
-	conn_collate(cid, inf$i$idv[v_auid], AUDIT_DATA, inf$ts, inf$i$node); 
+	conn_collate(cid, inf$i$idv[AUDITD_CORE::v_uid], AUDIT_DATA, inf$ts, inf$i$node); 
 
 	return ret_val;
 	} # syscall_connection end

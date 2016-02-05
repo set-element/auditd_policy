@@ -11,7 +11,6 @@
 #       legitimate account.
 #
 @load auditd_policy/util
-@load host_core/health_check
 
 @load frameworks/communication/listen
 @load base/frameworks/input
@@ -324,8 +323,8 @@ event transaction_rate()
                         }
 
                 # Now reset the reader
-                #schedule 1 sec { stop_reader() };
-                #schedule 10 sec { start_reader() };
+                schedule 1 sec { stop_reader() };
+                schedule 10 sec { start_reader() };
                 }
 
         # rate is too high - send a notice the first time
@@ -348,21 +347,10 @@ event transaction_rate()
         # rotate values
         input_count_prev = input_count;
 
-	local thh: HOST_HEALTH::Info;
-
-	thh$ts = network_time();
-	thh$origin = "AUDITD";
-	thh$recPerSec = input_count_delta;
-	thh$longLive = |AUDITD_CORE::identityState|;
-	thh$shortLive = |AUDITD_CORE::actionState|;
-
-	Log::write(HOST_HEALTH::LOG, thh);
-
         # reschedule this all over again ...
-        #if ( DATANODE )
-        #	schedule input_test_interval { transaction_rate() };
+        if ( DATANODE )
+        	schedule input_test_interval { transaction_rate() };
         }
-
 
 function init_datastream()
 	{
@@ -376,7 +364,7 @@ function init_datastream()
 
 
 		# start rate monitoring for event stream
-		#schedule input_test_interval { transaction_rate() };
+		schedule input_test_interval { transaction_rate() };
 		}	
 
 	}

@@ -407,6 +407,6 @@ event auditd_user(index: string, action: string, ts: time, node: string, ses: in
 event bro_init() &priority = 5
 {
 	Log::create_stream(AUDITD_CORE::LOG, [$columns=Info]);
-	local filter_c: Log::Filter = [$name="default", $path="auditd_core];
+	local filter_c: Log::Filter = [$name="default", $path="auditd_core"];
 	Log::add_filter(LOG, filter_c);
 }
