@@ -223,7 +223,7 @@ function s_string(s: string) : string_return
 
 	# Note that the value of ret_string should be consitered dangerous
 	#  as the content can contain terminal control characters etc etc.
-	ret_str$data = raw_unescape_URI( sub_s );
+	ret_str$data = unescape_URI( sub_s );
 
 	# remove backspace characters and some other goop.  Most of this
 	#  is driven from the iSSHD code, but you might as well keep it
