@@ -22,6 +22,7 @@ export {
         redef enum Notice::Type += {
                 AUDITD_INPUT_LowTransactionRate,
                 AUDITD_INPUT_HighTransactionRate,
+		AUDITD_INPUT_DataReset,
                 };
 
 	redef InputAscii::empty_field = "EMPTY";
@@ -32,8 +33,9 @@ export {
 	};
 
 	const data_file = "/home/bro/logs/RAW/AUDIT_DATA_0" &redef;
-	#const data_file = "/tmp/ad" &redef;
 	const DATANODE = F &redef;
+
+	const fluentd_offset = 1 &redef;
 	# Offset controls the behavior of the file reader.  An offset of "-1" 
 	#   will behave like a "tail -0f" command, while a "0" will read the entire 
 	#   file before tailing it...
@@ -54,6 +56,12 @@ export {
         #  0=pre-init, 1=ok, 2=in low error
         global input_count_state: count = 0 &redef;
 
+	# semiphore for in-fr restart
+	global stop_sem = 0;
+
+	global start_reader: event();
+	global stop_reader: event();
+
 	}
 
 function execve_f(data: string) : count
@@ -67,16 +75,16 @@ function execve_f(data: string) : count
 		return 1;
 		}
 
-	local index = AUDITD_CORE::s_string( parts[0] );	# form a:b, a=action count, b=which record in action
-	local flavor = AUDITD_CORE::s_string( parts[1] );	# base object type
-	local action = AUDITD_CORE::s_string( parts[2] );	# the thing that happens, also called 'event' in traditional auditd docs
-	local ts = AUDITD_CORE::s_time( parts[3] );		# time of record
-	local node = AUDITD_CORE::s_string( parts[4] );
-	local ses = AUDITD_CORE::s_int( parts[5] );		# login session ID
-	local pid = AUDITD_CORE::s_int( parts[6] );		# Process id
+	local index = AUDITD_CORE::s_string( parts[0+fluentd_offset] );	# form a:b, a=action count, b=which record in action
+	local flavor = AUDITD_CORE::s_string( parts[1+fluentd_offset] );	# base object type
+	local action = AUDITD_CORE::s_string( parts[2+fluentd_offset] );	# the thing that happens, also called 'event' in traditional auditd docs
+	local ts = AUDITD_CORE::s_time( parts[3+fluentd_offset] );		# time of record
+	local node = AUDITD_CORE::s_string( parts[4+fluentd_offset] );
+	local ses = AUDITD_CORE::s_int( parts[5+fluentd_offset] );		# login session ID
+	local pid = AUDITD_CORE::s_int( parts[6+fluentd_offset] );		# Process id
 	#
-	local argc = AUDITD_CORE::s_int( parts[7] );		# number of arguments for exec (starts at 1)
-	local argument = AUDITD_CORE::s_string( parts[8] );	# total argument string
+	local argc = AUDITD_CORE::s_int( parts[7+fluentd_offset] );		# number of arguments for exec (starts at 1)
+	local argument = AUDITD_CORE::s_string( parts[8+fluentd_offset] );	# total argument string
 
 	#event auditd_execve(index$data, action$data, ts$data, node$data, ses, pid, argc, argument$data);
 	#event AUDITD_CORE::auditd_execve(index, action, ts, node, ses, pid, argc, argument);
@@ -95,34 +103,34 @@ function generic_f(data: string) : count
 		return 1;
 		}
 
-	local index = AUDITD_CORE::s_string( parts[0] );	# form a:b, a=action count, b=which record in action
-	local flavor = AUDITD_CORE::s_string( parts[1] );	# base object type
-	local action = AUDITD_CORE::s_string( parts[2] );	# the thing that happens, also called 'event' in traditional auditd docs
-	local ts = AUDITD_CORE::s_time( parts[3] );		# time of record
-	local node = AUDITD_CORE::s_string( parts[4] );	# host data originated from
+	local index = AUDITD_CORE::s_string( parts[0+fluentd_offset] );	# form a:b, a=action count, b=which record in action
+	local flavor = AUDITD_CORE::s_string( parts[1+fluentd_offset] );	# base object type
+	local action = AUDITD_CORE::s_string( parts[2+fluentd_offset] );	# the thing that happens, also called 'event' in traditional auditd docs
+	local ts = AUDITD_CORE::s_time( parts[3+fluentd_offset] );		# time of record
+	local node = AUDITD_CORE::s_string( parts[4+fluentd_offset] );	# host data originated from
 	#
-	local auid = AUDITD_CORE::s_string( parts[5] );
-	local key = AUDITD_CORE::s_string( parts[6] ); 
-	local comm = AUDITD_CORE::s_string( parts[7] );
-	local exe = AUDITD_CORE::s_string( parts[8] );
-	local a0 = AUDITD_CORE::s_string( parts[9] );
-	local a1 = AUDITD_CORE::s_string( parts[10] );
-	local a2 = AUDITD_CORE::s_string( parts[11] );
-	local uid = AUDITD_CORE::s_string( parts[12] );
-	local gid = AUDITD_CORE::s_string( parts[13] );
-	local euid = AUDITD_CORE::s_string( parts[14] );
-	local egid = AUDITD_CORE::s_string( parts[15] );
-	local fsuid = AUDITD_CORE::s_string( parts[16] );
-	local fsgid = AUDITD_CORE::s_string( parts[17] );
-	local suid = AUDITD_CORE::s_string( parts[18] );
-	local sgid = AUDITD_CORE::s_string( parts[19] );
-	local pid = AUDITD_CORE::s_int( parts[20] );
-	local ppid = AUDITD_CORE::s_int( parts[21] );
-	local ses = AUDITD_CORE::s_int( parts[22] );
-	local tty = AUDITD_CORE::s_string( parts[23] );
-	local terminal = AUDITD_CORE::s_string( parts[24] );
-	local success = AUDITD_CORE::s_string( parts[25] );
-	local ext = AUDITD_CORE::s_string( parts[26] );	
+	local auid = AUDITD_CORE::s_string( parts[5+fluentd_offset] );
+	local key = AUDITD_CORE::s_string( parts[6+fluentd_offset] ); 
+	local comm = AUDITD_CORE::s_string( parts[7+fluentd_offset] );
+	local exe = AUDITD_CORE::s_string( parts[8+fluentd_offset] );
+	local a0 = AUDITD_CORE::s_string( parts[9+fluentd_offset] );
+	local a1 = AUDITD_CORE::s_string( parts[10+fluentd_offset] );
+	local a2 = AUDITD_CORE::s_string( parts[11+fluentd_offset] );
+	local uid = AUDITD_CORE::s_string( parts[12+fluentd_offset] );
+	local gid = AUDITD_CORE::s_string( parts[13+fluentd_offset] );
+	local euid = AUDITD_CORE::s_string( parts[14+fluentd_offset] );
+	local egid = AUDITD_CORE::s_string( parts[15+fluentd_offset] );
+	local fsuid = AUDITD_CORE::s_string( parts[16+fluentd_offset] );
+	local fsgid = AUDITD_CORE::s_string( parts[17+fluentd_offset] );
+	local suid = AUDITD_CORE::s_string( parts[18+fluentd_offset] );
+	local sgid = AUDITD_CORE::s_string( parts[19+fluentd_offset] );
+	local pid = AUDITD_CORE::s_int( parts[20+fluentd_offset] );
+	local ppid = AUDITD_CORE::s_int( parts[21+fluentd_offset] );
+	local ses = AUDITD_CORE::s_int( parts[22+fluentd_offset] );
+	local tty = AUDITD_CORE::s_string( parts[23+fluentd_offset] );
+	local terminal = AUDITD_CORE::s_string( parts[24+fluentd_offset] );
+	local success = AUDITD_CORE::s_string( parts[25+fluentd_offset] );
+	local ext = AUDITD_CORE::s_string( parts[26+fluentd_offset] );	
 
 	event auditd_generic(index$data, action$data, ts$data, node$data, ses, pid, auid$data, comm$data, exe$data, a0$data, a1$data, a2$data, uid$data, gid$data, euid$data, egid$data, fsuid$data, fsgid$data, suid$data, sgid$data, ppid, tty$data, terminal$data, success$data, ext$data);
 
@@ -140,20 +148,20 @@ function place_f(data: string) : count
 		print fmt("place_f parse error for %s", data);
 		return 1;
 		}
-	local index = AUDITD_CORE::s_string( parts[0] );	# form a:b, a=action count, b=which record in action
-	local flavor = AUDITD_CORE::s_string( parts[1] );	# base object type
-	local action = AUDITD_CORE::s_string( parts[2] );	# the thing that happens, also called 'event' in traditional auditd docs
-	local ts = AUDITD_CORE::s_time( parts[3] );		# time of record
-	local node = AUDITD_CORE::s_string( parts[4] );	# host data originated from
-	local ses = AUDITD_CORE::s_int( parts[5] );
-	local pid = AUDITD_CORE::s_int( parts[6] );
+	local index = AUDITD_CORE::s_string( parts[0+fluentd_offset] );	# form a:b, a=action count, b=which record in action
+	local flavor = AUDITD_CORE::s_string( parts[1+fluentd_offset] );	# base object type
+	local action = AUDITD_CORE::s_string( parts[2+fluentd_offset] );	# the thing that happens, also called 'event' in traditional auditd docs
+	local ts = AUDITD_CORE::s_time( parts[3+fluentd_offset] );		# time of record
+	local node = AUDITD_CORE::s_string( parts[4+fluentd_offset] );	# host data originated from
+	local ses = AUDITD_CORE::s_int( parts[5+fluentd_offset] );
+	local pid = AUDITD_CORE::s_int( parts[6+fluentd_offset] );
 	#
-	local cwd = AUDITD_CORE::s_string( parts[7] );
-	local path_name = AUDITD_CORE::s_string( parts[8] );
-	local inode = AUDITD_CORE::s_int( parts[9] );
-	local mode = AUDITD_CORE::s_int( parts[10] );
-	local ouid = AUDITD_CORE::s_string( parts[11] );
-	local ogid = AUDITD_CORE::s_string( parts[12] );
+	local cwd = AUDITD_CORE::s_string( parts[7+fluentd_offset] );
+	local path_name = AUDITD_CORE::s_string( parts[8+fluentd_offset] );
+	local inode = AUDITD_CORE::s_int( parts[9+fluentd_offset] );
+	local mode = AUDITD_CORE::s_int( parts[10+fluentd_offset] );
+	local ouid = AUDITD_CORE::s_string( parts[11+fluentd_offset] );
+	local ogid = AUDITD_CORE::s_string( parts[12+fluentd_offset] );
 
 	event auditd_place(index$data, action$data, ts$data, node$data, ses, pid, cwd$data, path_name$data, inode, mode, ouid$data, ogid$data);
 	return 0;
@@ -170,15 +178,15 @@ function saddr_f(data: string) : count
 		print fmt("saddr_f parse error for %s", data);
 		return 1;
 		}
-	local index = AUDITD_CORE::s_string( parts[0] );	# form a:b, a=action count, b=which record in action
-	local flavor = AUDITD_CORE::s_string( parts[1] );	# base object type
-	local action = AUDITD_CORE::s_string( parts[2] );	# the thing that happens, also called 'event' in traditional auditd docs
-	local ts = AUDITD_CORE::s_time( parts[3] );		# time of record
-	local node = AUDITD_CORE::s_string( parts[4] );	# host data originated from
-	local ses = AUDITD_CORE::s_int( parts[5] );
-	local pid = AUDITD_CORE::s_int( parts[6] );
+	local index = AUDITD_CORE::s_string( parts[0+fluentd_offset] );	# form a:b, a=action count, b=which record in action
+	local flavor = AUDITD_CORE::s_string( parts[1+fluentd_offset] );	# base object type
+	local action = AUDITD_CORE::s_string( parts[2+fluentd_offset] );	# the thing that happens, also called 'event' in traditional auditd docs
+	local ts = AUDITD_CORE::s_time( parts[3+fluentd_offset] );		# time of record
+	local node = AUDITD_CORE::s_string( parts[4+fluentd_offset] );	# host data originated from
+	local ses = AUDITD_CORE::s_int( parts[5+fluentd_offset] );
+	local pid = AUDITD_CORE::s_int( parts[6+fluentd_offset] );
 	#
-	local saddr = AUDITD_CORE::s_string( parts[7] );	# address object (local or inet)
+	local saddr = AUDITD_CORE::s_string( parts[7+fluentd_offset] );	# address object (local or inet)
 
 	event auditd_saddr(index$data, action$data, ts$data, node$data, ses, pid, saddr$data);
 	return 0;
@@ -194,35 +202,35 @@ function syscall_f(data: string) : count
 		print fmt("syscall_f parse error for %s", data);
 		return 1;
 		}
-	local index = AUDITD_CORE::s_string( parts[0] );	# form a:b, a=action count, b=which record in action
-	local flavor = AUDITD_CORE::s_string( parts[1] );	# base object type
-	local action = AUDITD_CORE::s_string( parts[2] );	# the thing that happens, also called 'event' in traditional auditd docs
-	local ts = AUDITD_CORE::s_time( parts[3] );		# time of record
-	local node = AUDITD_CORE::s_string( parts[4] );
+	local index = AUDITD_CORE::s_string( parts[0+fluentd_offset] );	# form a:b, a=action count, b=which record in action
+	local flavor = AUDITD_CORE::s_string( parts[1+fluentd_offset] );	# base object type
+	local action = AUDITD_CORE::s_string( parts[2+fluentd_offset] );	# the thing that happens, also called 'event' in traditional auditd docs
+	local ts = AUDITD_CORE::s_time( parts[3+fluentd_offset] );		# time of record
+	local node = AUDITD_CORE::s_string( parts[4+fluentd_offset] );
 	#
-	local ses = AUDITD_CORE::s_int( parts[5] );		# login session ID
-	local auid = AUDITD_CORE::s_string( parts[6] );
-	local syscall = AUDITD_CORE::s_string( parts[7] );
-	local key = AUDITD_CORE::s_string( parts[8] ); 
-	local comm = AUDITD_CORE::s_string( parts[9] );
-	local exe = AUDITD_CORE::s_string( parts[10] );
-	local a0 = AUDITD_CORE::s_string( parts[11] );
-	local a1 = AUDITD_CORE::s_string( parts[12] );
-	local a2 = AUDITD_CORE::s_string( parts[13] );
-	local uid = AUDITD_CORE::s_string( parts[14] );
-	local gid = AUDITD_CORE::s_string( parts[15] );
-	local euid = AUDITD_CORE::s_string( parts[16] );
-	local egid = AUDITD_CORE::s_string( parts[17] );
-	local fsuid = AUDITD_CORE::s_string( parts[18] );
-	local fsgid = AUDITD_CORE::s_string( parts[19] );
-	local suid = AUDITD_CORE::s_string( parts[20] );
-	local sgid = AUDITD_CORE::s_string( parts[21] );
-	local pid = AUDITD_CORE::s_int( parts[22] );
-	local ppid = AUDITD_CORE::s_int( parts[23] );
-	local tty = AUDITD_CORE::s_string( parts[24] );
-	#local terminal = AUDITD_CORE::s_string( parts[24] );
-	local success = AUDITD_CORE::s_string( parts[25] );
-	local ext = AUDITD_CORE::s_string( parts[26] );
+	local ses = AUDITD_CORE::s_int( parts[5+fluentd_offset] );		# login session ID
+	local auid = AUDITD_CORE::s_string( parts[6+fluentd_offset] );
+	local syscall = AUDITD_CORE::s_string( parts[7+fluentd_offset] );
+	local key = AUDITD_CORE::s_string( parts[8+fluentd_offset] ); 
+	local comm = AUDITD_CORE::s_string( parts[9+fluentd_offset] );
+	local exe = AUDITD_CORE::s_string( parts[10+fluentd_offset] );
+	local a0 = AUDITD_CORE::s_string( parts[11+fluentd_offset] );
+	local a1 = AUDITD_CORE::s_string( parts[12+fluentd_offset] );
+	local a2 = AUDITD_CORE::s_string( parts[13+fluentd_offset] );
+	local uid = AUDITD_CORE::s_string( parts[14+fluentd_offset] );
+	local gid = AUDITD_CORE::s_string( parts[15+fluentd_offset] );
+	local euid = AUDITD_CORE::s_string( parts[16+fluentd_offset] );
+	local egid = AUDITD_CORE::s_string( parts[17+fluentd_offset] );
+	local fsuid = AUDITD_CORE::s_string( parts[18+fluentd_offset] );
+	local fsgid = AUDITD_CORE::s_string( parts[19+fluentd_offset] );
+	local suid = AUDITD_CORE::s_string( parts[20+fluentd_offset] );
+	local sgid = AUDITD_CORE::s_string( parts[21+fluentd_offset] );
+	local pid = AUDITD_CORE::s_int( parts[22+fluentd_offset] );
+	local ppid = AUDITD_CORE::s_int( parts[23+fluentd_offset] );
+	local tty = AUDITD_CORE::s_string( parts[24+fluentd_offset] );
+	#local terminal = AUDITD_CORE::s_string( parts[24+fluentd_offset] );
+	local success = AUDITD_CORE::s_string( parts[25+fluentd_offset] );
+	local ext = AUDITD_CORE::s_string( parts[26+fluentd_offset] );
 
 	event auditd_syscall(index$data, action$data, ts$data, node$data, ses, pid, auid$data, syscall$data, key$data, comm$data, exe$data, a0$data, a1$data, a2$data, uid$data, gid$data, euid$data, egid$data, fsuid$data, fsgid$data, suid$data, sgid$data, ppid, tty$data, success$data, ext$data);
 	return 0;
@@ -238,28 +246,28 @@ function user_f(data: string) : count
 		print fmt("user_f parse error for %s", data);
 		return 1;
 		}
-	local index = AUDITD_CORE::s_string( parts[0] );	# form a:b, a=action count, b=which record in action
-	local flavor = AUDITD_CORE::s_string( parts[1] );	# base object type
-	local action = AUDITD_CORE::s_string( parts[2] );	# the thing that happens, also called 'event' in traditional auditd docs
-	local ts = AUDITD_CORE::s_time( parts[3] );		# time of record
-	local node = AUDITD_CORE::s_string( parts[4] );
+	local index = AUDITD_CORE::s_string( parts[0+fluentd_offset] );	# form a:b, a=action count, b=which record in action
+	local flavor = AUDITD_CORE::s_string( parts[1+fluentd_offset] );	# base object type
+	local action = AUDITD_CORE::s_string( parts[2+fluentd_offset] );	# the thing that happens, also called 'event' in traditional auditd docs
+	local ts = AUDITD_CORE::s_time( parts[3+fluentd_offset] );		# time of record
+	local node = AUDITD_CORE::s_string( parts[4+fluentd_offset] );
 	#
-	local ses = AUDITD_CORE::s_int( parts[5] );
-	local auid = AUDITD_CORE::s_string( parts[6] );
-	local egid = AUDITD_CORE::s_string( parts[7] );
-	local euid = AUDITD_CORE::s_string( parts[8] );
-	local fsgid = AUDITD_CORE::s_string( parts[9] );
-	local fsuid = AUDITD_CORE::s_string( parts[10] );
-	local gid = AUDITD_CORE::s_string( parts[11] );
-	local suid = AUDITD_CORE::s_string( parts[12] );
-	local sgid = AUDITD_CORE::s_string( parts[13] );
-	local uid = AUDITD_CORE::s_string( parts[14] );
-	local pid = AUDITD_CORE::s_int( parts[15] );
-	local success = AUDITD_CORE::s_string( parts[16] );
-	local ext = AUDITD_CORE::s_string( parts[17] );
-	local terminal = AUDITD_CORE::s_string( parts[18] );
-	local exe = AUDITD_CORE::s_string( parts[19] );
-	#local msg = AUDITD_CORE::s_string( parts[20] );
+	local ses = AUDITD_CORE::s_int( parts[5+fluentd_offset] );
+	local auid = AUDITD_CORE::s_string( parts[6+fluentd_offset] );
+	local egid = AUDITD_CORE::s_string( parts[7+fluentd_offset] );
+	local euid = AUDITD_CORE::s_string( parts[8+fluentd_offset] );
+	local fsgid = AUDITD_CORE::s_string( parts[9+fluentd_offset] );
+	local fsuid = AUDITD_CORE::s_string( parts[10+fluentd_offset] );
+	local gid = AUDITD_CORE::s_string( parts[11+fluentd_offset] );
+	local suid = AUDITD_CORE::s_string( parts[12+fluentd_offset] );
+	local sgid = AUDITD_CORE::s_string( parts[13+fluentd_offset] );
+	local uid = AUDITD_CORE::s_string( parts[14+fluentd_offset] );
+	local pid = AUDITD_CORE::s_int( parts[15+fluentd_offset] );
+	local success = AUDITD_CORE::s_string( parts[16+fluentd_offset] );
+	local ext = AUDITD_CORE::s_string( parts[17+fluentd_offset] );
+	local terminal = AUDITD_CORE::s_string( parts[18+fluentd_offset] );
+	local exe = AUDITD_CORE::s_string( parts[19+fluentd_offset] );
+	#local msg = AUDITD_CORE::s_string( parts[20+fluentd_offset] );
 	local msg = AUDITD_CORE::s_string("NODATA");
 
 	event auditd_user(index$data, action$data, ts$data, node$data, ses, pid, auid$data, euid$data, egid$data, fsuid$data, fsgid$data, suid$data, sgid$data, uid$data, gid$data, exe$data, terminal$data, success$data, ext$data, msg$data);
@@ -267,7 +275,7 @@ function user_f(data: string) : count
 	}
 
 redef dispatcher += {
-	["EXECVE_OBJ"] = execve_f,
+	["EXEC_OBJ"] = execve_f,
 	["GENERIC_OBJ"] = generic_f,
 	["PLACE_OBJ"] = place_f,
 	["SADDR_OBJ"] = saddr_f,
@@ -293,13 +301,39 @@ event auditdLine(description: Input::EventDescription, tpe: Input::Event, LV: li
 	# the event line needs to have a minimum number of space delimited fields
 	#   if they are not here, skip the line
 	if ( |parts| > 7 ) {
-		event_name = parts[1];
+		event_name = parts[1 + fluentd_offset];
 
 		if ( event_name in dispatcher ) 
 			dispatcher[event_name](LV$d);
 		}
 
 	}
+
+event stop_reader()
+        {
+
+        if ( stop_sem == 0 ) {
+                Input::remove("auditd");
+                stop_sem = 1;
+
+                NOTICE([$note=AUDITD_INPUT_DataReset,$msg=fmt("stopping reader")]);
+                }
+        }
+
+event start_reader()
+        {
+        if ( stop_sem == 1 ) {
+                local config_strings: table[string] of string = {
+                        ["offset"] = "-1",
+                        };
+
+		Input::add_event([$source=data_file, $config=config_strings, $reader=Input::READER_RAW, $mode=Input::STREAM, $name="auditd", $fields=lineVals, $ev=auditdLine]);
+
+                NOTICE([$note=AUDITD_INPUT_DataReset,$msg=fmt("starting reader")]);
+                stop_sem = 0;
+                }
+        }
+
 
 event transaction_rate()
         {
@@ -308,8 +342,19 @@ event transaction_rate()
         # We make the assumption here that the low_water < high_water
         # Use a global for input_count_delta so that the value is consistent across
         #   anybody looking at it.
+
+	if ( ! DATANODE ) {
+		return;
+		}
+
+	if ( input_count_prev <  10 ) {
+		input_count_prev = input_count;
+		schedule input_test_interval { transaction_rate() };
+		return;
+	}
+
         input_count_delta = input_count - input_count_prev;
-        #print fmt("%s Log delta: %s", network_time(),delta);
+        print fmt("%s Log delta: %s", network_time(),input_count_delta);
 
         # rate is too low - send a notice the first time
         if (input_count_delta <= input_low_water) {
@@ -323,8 +368,11 @@ event transaction_rate()
                         }
 
                 # Now reset the reader
-                schedule 1 sec { stop_reader() };
-                schedule 10 sec { start_reader() };
+                schedule 1 sec { AUDITD_IN_STREAM::stop_reader() };
+                schedule 10 sec { AUDITD_IN_STREAM::start_reader() };
+        	schedule 70 sec { transaction_rate() };
+		input_count_prev = input_count;
+		return;
                 }
 
         # rate is too high - send a notice the first time
@@ -337,19 +385,16 @@ event transaction_rate()
 
                         input_count_state = 2; # 2: transaction rate
                         }
+        	schedule input_test_interval { transaction_rate() };
+		input_count_prev = input_count;
+		return;
                 }
 
         # rate is ok
-        if ( (input_count_delta > input_low_water) && (input_count_delta < input_high_water) ) {
-                input_count_state = 1;
-                }
-
-        # rotate values
+	input_count_state = 1;
+        schedule input_test_interval { transaction_rate() };
         input_count_prev = input_count;
 
-        # reschedule this all over again ...
-        if ( DATANODE )
-        	schedule input_test_interval { transaction_rate() };
         }
 
 function init_datastream()
@@ -364,6 +409,7 @@ function init_datastream()
 
 
 		# start rate monitoring for event stream
+		print fmt("init input_test_interval");
 		schedule input_test_interval { transaction_rate() };
 		}	
 
