@@ -145,7 +145,8 @@ export {
         global actionState: table[string] of Info;
         global identityState: table[string] of identity;
 
-        global action_delete_delay = 5 min &redef;
+        global action_delete_delay = 5 sec &redef;
+        #global action_delete_delay = 5 min &redef;
 
         # exported functions and events
         global get_action_id: function(index: string, node: string) : string;
@@ -209,7 +210,7 @@ function s_time(s: string) : time_return
 		}
 	else {
 		ret_val$ret = DATA_PATTERN_ERROR;
-		print fmt("TIME PATTERN ERROR: %s", s);
+		#print fmt("TIME PATTERN ERROR: %s", s);
 		}
 
 	return ret_val;
@@ -240,6 +241,10 @@ function s_string(s: string) : string_return
 	ret_str$data = escape_string(ret_str$data);	
 	ret_str$ret = DATA_NOERROR;
 
+	# and make sure that we are returning *something* in the data
+	if ( |ret_str$data| == 0 )
+		ret_str$data = "";
+
 	return ret_str;
 	}
 
@@ -253,7 +258,7 @@ function s_count(s: string) : count
 	if ( mpr$matched )
 		ret_val =  to_count(s);
 	else 
-		print fmt("COUNT PATTERN ERROR: %s", s);
+		#print fmt("COUNT PATTERN ERROR: %s", s);
 
 	return ret_val;
 	}
@@ -305,8 +310,8 @@ function s_int(s: string) : int
 
 	if ( i_pm$matched )
 		ret_val = to_int(s);
-	else
-		print fmt("INT PATTERN ERROR: %s", s);
+	#else
+	#	print fmt("INT PATTERN ERROR: %s", s);
 
 	return ret_val;
 	}
@@ -410,8 +415,8 @@ function last_record(index: string): count
                 if ( index_split[1] == index_split[2] )
                         ret = 1;
                 }
-        else
-                print fmt("INDEX pattern match for: %s", index);
+        #else
+        #        print fmt("INDEX pattern match for: %s", index);
 
         return ret;
 }
@@ -429,6 +434,7 @@ function update_action(i: Info)
 {
         # Update the indexed Info obj with the provided t_Info
         local key = get_action_id(i$index,i$node);
+	
         # update the record values for new *non-default* entries
         if ( key in actionState ) {
 
@@ -550,8 +556,9 @@ function delete_action(index: string, node: string)
         # remove action obj
         local key = get_action_id(index,node);
 
-        if ( key in actionState )
-                schedule action_delete_delay { delete_item(key) };
+        if ( key in actionState ) {
+                schedule action_delete_delay { AUDITD_CORE::delete_item(key) };
+		}
 }
 
 function string_test(s: string) : bool
@@ -719,8 +726,10 @@ event delete_item(key: string)
         # This is used to do the actual removing of records from the
         #   actionState table
         #
-        if ( key in actionState )
+
+        if ( key in actionState ) {
                 delete actionState[key];
+		}
 }
 
 
