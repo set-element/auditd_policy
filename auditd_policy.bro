@@ -30,6 +30,8 @@ export {
 		AUDITD_FileMetadata,
 		AUDITD_POLICY_UserLocation,
 		AUDITD_POLICY_NetError,
+		AUDITD_POLICY_HostScan,
+		AUDITD_POLICY_PortScan,
 		};
 
 	# tag for file loaded
@@ -100,9 +102,10 @@ export {
 	global execution_history: table[string] of history_rec;
 
 	# -- #
+	global clear_exec_hist: event(id: string);
 
 	global auditd_policy_dispatcher: function(i: AUDITD_CORE::Info);
-	global s: event(s: string);
+	#global s: event(s: string);
 
 	global auditd_execve: function(i: AUDITD_CORE::Info);
 	global auditd_generic: function(i: AUDITD_CORE::Info);
@@ -131,23 +134,31 @@ export {
 
 	# # Network metadata
 	#  here metadata can be both unix socket or inet
+	# Also for tracking scanning info - the lists here
+	#  are only for failed conns
+	#
 	type connMetaData: record {
 		bind_err_count: count &default=0;
-		bind_err_set: string &default="";
+		bind_err_set: set[string];
 		socket_err_count: count &default=0;
-		socket_err_set: string &default="";
+		socket_err_set: set[string];
 		connect_err_count: count &default=0;
-		connect_err_set: string &default="";
+		connect_err_set: set[string];
 		listen_err_count: count &default=0;
-		listen_err_set: string &default="";
+		listen_err_set: set[string];
+		#
+		host_scan: set[string];
+		port_scan: set[string];
 		};
 
 	global connMetaDataTable: table[string] of connMetaData;
 
-	global SYS_NET_BIND_THRESHOLD =    1 &redef;
-	global SYS_NET_SOCKET_THRESHOLD =  1 &redef;
-	global SYS_NET_CONNECT_THRESHOLD = 1 &redef;
-	global SYS_NET_LISTEN_THRESHOLD = 1 &redef;
+	global SYS_NET_BIND_THRESHOLD =    10 &redef;
+	global SYS_NET_SOCKET_THRESHOLD =  50 &redef;
+	global SYS_NET_CONNECT_THRESHOLD = 50 &redef;
+	global SYS_NET_LISTEN_THRESHOLD = 5 &redef;
+	global SYS_NET_HOSTSCAN_THRESHOLD = 10 &redef;
+	global SYS_NET_PORTSCAN_THRESHOLD = 10 &redef;
 
 	# File system metadata
 	# Table, indexed by identity, which tracks aggrigate filesystem activity
@@ -189,6 +200,24 @@ redef net_listen_syscalls += { "bind", "accept", };
 # ----- # ----- #
 #      Functions
 # ----- # ----- #
+
+# Fill out an empty connMetaData object
+function init_cmd() : connMetaData
+	{
+	local t_cmd: connMetaData;
+
+	local t_bind_err_set: set[string];
+	local t_socket_err_set: set[string];
+	local t_connect_err_set: set[string];
+	local t_listen_err_set: set[string];
+
+	t_cmd$bind_err_set = t_bind_err_set;
+	t_cmd$socket_err_set = t_socket_err_set;
+	t_cmd$connect_err_set = t_connect_err_set;
+	t_cmd$listen_err_set = t_listen_err_set;
+
+	return t_cmd;
+	}
 
 # This function compares two id values and in the event that
 #  the post value are not whitelisted you get {0,1,2} 
@@ -290,21 +319,30 @@ function syscall_socket(inf: AUDITD_CORE::Info) : count
 	if ( inf$key == "SYS_NET_ERR" ) {
 	
 		local cmd: connMetaData;
+		local cmdIndex = fmt("%s%s", inf$node, inf$i$idv[AUDITD_CORE::v_auid]);
 
-		if ( index in connMetaDataTable )
-			cmd = connMetaDataTable[index];
-	
-		cmd$socket_err_set = fmt("%s %s|%s", cmd$socket_err_set, t_socket_data$domain, t_socket_data$s_type);
-	
-		if ( ++cmd$socket_err_count == SYS_NET_SOCKET_THRESHOLD ) {
+		if ( cmdIndex in connMetaDataTable )
+			cmd = connMetaDataTable[cmdIndex];
+		else
+			cmd = init_cmd();
 
-			NOTICE([$note=AUDITD_POLICY_NetError,
-				$msg = fmt("Socket error count [%s] [%s] for %s %s", 
-					SYS_NET_SOCKET_THRESHOLD, cmd$socket_err_set, 
-					inf$i$idv[AUDITD_CORE::v_uid], inf$i$idv[AUDITD_CORE::v_gid])]);
-			}
+		local t_index = fmt("%s|%s", t_socket_data$domain, t_socket_data$s_type);
 
-		connMetaDataTable[index] = cmd;
+		if ( t_index !in cmd$socket_err_set ) {
+			
+			add cmd$socket_err_set[t_index];
+
+			if ( ++cmd$socket_err_count == SYS_NET_SOCKET_THRESHOLD ) {
+
+				NOTICE([$note=AUDITD_POLICY_NetError,
+					$msg = fmt("Socket error count [%s] [%s] for %s %s", 
+						SYS_NET_SOCKET_THRESHOLD, cmd$socket_err_set, 
+						inf$i$idv[AUDITD_CORE::v_uid], inf$i$idv[AUDITD_CORE::v_gid])]);
+				}
+
+			} # end of t_index test
+
+		connMetaDataTable[cmdIndex] = cmd;
 		}
 
 	return ret_val;
@@ -325,20 +363,28 @@ function syscall_bind(inf: AUDITD_CORE::Info) : count
 	if ( inf$key == "SYS_NET_ERR" ) {
 	
 		local cmd: connMetaData;
-		local cmdIndex = fmt("%s%s", inf$node, inf$ses);
+		local cmdIndex = fmt("%s%s", inf$node, inf$i$idv[AUDITD_CORE::v_auid]);
 
 		if ( cmdIndex in connMetaDataTable )
 			cmd = connMetaDataTable[cmdIndex];
-	
-		cmd$bind_err_set = fmt("%s %s|%s", cmd$bind_err_set, inf$s_host, inf$s_serv);
-	
-		if ( ++cmd$bind_err_count == SYS_NET_BIND_THRESHOLD ) {
+                else
+                        cmd = init_cmd();
 
-			NOTICE([$note=AUDITD_POLICY_NetError,
-				$msg = fmt("Bind error count [%s] [%s] for %s %s", 
-				SYS_NET_BIND_THRESHOLD, cmd$bind_err_set, inf$i$idv[AUDITD_CORE::v_uid], 
-				inf$i$idv[AUDITD_CORE::v_gid])]);
-			}
+                local t_index = fmt("%s|%s", t_socket_data$domain, t_socket_data$s_type);
+	
+		if ( t_index !in cmd$bind_err_set ) {
+
+                        add cmd$bind_err_set[t_index];
+	
+			if ( ++cmd$bind_err_count == SYS_NET_BIND_THRESHOLD ) {
+	
+				NOTICE([$note=AUDITD_POLICY_NetError,
+					$msg = fmt("Bind error count [%s] [%s] for %s %s", 
+					SYS_NET_BIND_THRESHOLD, cmd$bind_err_set, inf$i$idv[AUDITD_CORE::v_uid], 
+					inf$i$idv[AUDITD_CORE::v_gid])]);
+				}
+
+			} # end of t_index test
 
 		connMetaDataTable[cmdIndex] = cmd;
 		}
@@ -379,20 +425,76 @@ function syscall_connect(inf: AUDITD_CORE::Info) : count
 	if ( inf$key == "SYS_NET_ERR" ) {
 
 		local cmd: connMetaData;
-		local cmdIndex = fmt("%s%s", inf$node, inf$ses);
+		local cmdIndex = fmt("%s%s", inf$node, inf$i$idv[AUDITD_CORE::v_auid]);
 
 		if ( cmdIndex in connMetaDataTable )
 			cmd = connMetaDataTable[cmdIndex];
-	
-		cmd$connect_err_set = fmt("%s %s|%s", cmd$connect_err_set, inf$s_host, inf$s_serv);
-	
-		if ( ++cmd$connect_err_count == SYS_NET_LISTEN_THRESHOLD ) {
+                else
+                        cmd = init_cmd();
 
-			NOTICE([$note=AUDITD_POLICY_NetError,
-				$msg = fmt("Connect error count [%s] [%s] for %s %s", 
-				SYS_NET_CONNECT_THRESHOLD, cmd$connect_err_set, inf$i$idv[AUDITD_CORE::v_uid], 
-				inf$i$idv[AUDITD_CORE::v_gid])]);
-			}
+                local t_index = fmt("%s|%s", inf$s_host, inf$s_serv);
+
+                if ( t_index !in cmd$connect_err_set ) {
+
+                        add cmd$connect_err_set[t_index];
+
+			if ( ++cmd$connect_err_count == SYS_NET_CONNECT_THRESHOLD ) {
+
+				local t_cec = "";
+				for ( l in cmd$connect_err_set ) {
+					t_cec = fmt("%s %s", t_cec, l);
+					}
+
+				NOTICE([$note=AUDITD_POLICY_NetError,
+					$msg = fmt("NetError %s {%s}  for %s %s %s", 
+					inf$node, t_cec, SYS_NET_CONNECT_THRESHOLD, inf$i$idv[AUDITD_CORE::v_uid], 
+					inf$i$idv[AUDITD_CORE::v_gid])]);
+				}
+			#
+			# Now do host scan detection
+			if ( inf$s_host !in cmd$host_scan ) {
+
+				add cmd$host_scan[inf$s_host];
+			
+				if ( |cmd$host_scan| == SYS_NET_HOSTSCAN_THRESHOLD ) {
+
+					local t_chs = "";
+					for ( l2 in cmd$host_scan ) {
+						t_chs = fmt("%s %s", t_chs, l2);
+						}
+
+					NOTICE([$note=AUDITD_POLICY_HostScan,
+						$msg = fmt("Host scan %s scan {%s} %s hosts for %s %s", 
+						inf$node, t_chs, SYS_NET_HOSTSCAN_THRESHOLD, 
+						inf$i$idv[AUDITD_CORE::v_uid], inf$i$idv[AUDITD_CORE::v_gid])]);
+
+					} # end SYS_NET_HOSTSCAN_THRESHOLD
+
+				}
+
+			#
+			# Now do port scan detection
+			if ( inf$s_serv !in cmd$port_scan ) {
+
+				add cmd$port_scan[inf$s_serv];
+			
+				if ( |cmd$port_scan| == SYS_NET_PORTSCAN_THRESHOLD ) {
+
+					local t_cps = "";
+					for ( l3 in cmd$port_scan ) {
+						t_cps = fmt("%s %s", t_cps, l3);
+						}
+
+					NOTICE([$note=AUDITD_POLICY_PortScan,
+						$msg = fmt("Port scan %s {%s}  %s ports for %s %s", 
+						inf$node, t_cps, SYS_NET_PORTSCAN_THRESHOLD, 
+						inf$i$idv[AUDITD_CORE::v_uid], inf$i$idv[AUDITD_CORE::v_gid])]);
+
+					} # end SYS_NET_PORTSCAN_THRESHOLD
+
+				}
+
+			 } # end of t_index test
 
 		connMetaDataTable[cmdIndex] = cmd;
 		}
@@ -428,20 +530,28 @@ function syscall_listen(inf: AUDITD_CORE::Info) : count
 	if ( inf$key == "SYS_NET_ERR" ) {
 
 		local cmd: connMetaData;
-		local cmdIndex = fmt("%s%s", inf$node, inf$ses);
+		local cmdIndex = fmt("%s%s", inf$node, inf$i$idv[AUDITD_CORE::v_auid]);
 
 		if ( cmdIndex in connMetaDataTable )
 			cmd = connMetaDataTable[cmdIndex];
-	
-		cmd$listen_err_set = fmt("%s %s|%s", cmd$listen_err_set, inf$s_host, inf$s_serv);
-	
-		if ( ++cmd$connect_err_count == SYS_NET_LISTEN_THRESHOLD ) {
+                else
+                        cmd = init_cmd();
 
-			NOTICE([$note=AUDITD_POLICY_NetError,
-				$msg = fmt("Listen error count [%s] [%s] for %s %s", 
-				SYS_NET_LISTEN_THRESHOLD, cmd$listen_err_set, inf$i$idv[AUDITD_CORE::v_uid], 
-				inf$i$idv[AUDITD_CORE::v_gid])]);
-			}
+                local t_index = fmt("%s|%s", t_socket_data$domain, t_socket_data$s_type);
+
+                if ( t_index !in cmd$listen_err_set ) {
+
+                        add cmd$listen_err_set[t_index];
+
+			if ( ++cmd$listen_err_count == SYS_NET_LISTEN_THRESHOLD ) {
+
+				NOTICE([$note=AUDITD_POLICY_NetError,
+					$msg = fmt("Listen error count [%s] [%s] for %s %s", 
+					SYS_NET_LISTEN_THRESHOLD, cmd$listen_err_set, inf$i$idv[AUDITD_CORE::v_uid], 
+					inf$i$idv[AUDITD_CORE::v_gid])]);
+				}
+
+			} # end of t_index test
 
 		connMetaDataTable[cmdIndex] = cmd;
 		}
@@ -575,8 +685,8 @@ function network_register_conn(inf: AUDITD_CORE::Info) : count
 
 	# For the time being we focus on succesful connect() syscalls - in
 	#  this event the "error" code will be 0.
-	if ( to_int(inf$ext) != 0 )
-		return ret_val;	
+	#if ( to_int(inf$ext) != 0 )
+	#	return ret_val;	
 
 	local index = fmt("%s%s%s%s", inf$node, inf$ses, inf$pid, inf$a0);
 
@@ -967,6 +1077,15 @@ function process_place(inf: AUDITD_CORE::Info) : count
 #      Events
 # ----- # ----- #
 
+event clear_exec_hist(id: string)
+        {
+        
+        if ( id in execution_history ) {
+                delete execution_history[id];
+                }
+        }
+
+
 event identity_time_test(ses: int, node: string, n: int, exe: string, did: string)
 	{
 	local t_id = AUDITD_CORE::get_identity_id(ses, node);
@@ -1106,7 +1225,6 @@ function auditd_policy_dispatcher(inf: AUDITD_CORE::Info)
 			#
 
 			if ( key in file_error_set ) {
-				#print fmt("KEY PASS: %s", key);
 				file_error(inf);
 				}
 			break;
