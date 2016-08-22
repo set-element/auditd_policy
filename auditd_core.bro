@@ -221,7 +221,7 @@ event auditd_saddr(index: string, action: string, ts: time, node: string, ses: i
 		if ( string_test(t_serv[1]) )
 			t_Info$s_serv = t_serv[1];
 
-		print fmt("          INIT: %s %s %s", t_Info$s_type, t_Info$s_host, t_Info$s_serv);
+		#print fmt("          INIT: %s %s %s", t_Info$s_type, t_Info$s_host, t_Info$s_serv);
 		}
 	else if ( stype == "local" ) {
 	
@@ -237,7 +237,7 @@ event auditd_saddr(index: string, action: string, ts: time, node: string, ses: i
 		if ( string_test(stype) )	
 			t_Info$s_type = stype;
 
-		if ( string_test(t_host[2]) )
+		if ( string_test(t_host[1]) )
 			t_Info$s_host = t_host[1];
 		
 		}
@@ -387,6 +387,13 @@ event auditd_user(index: string, action: string, ts: time, node: string, ses: in
 		{
 		#print fmt("disable id test for %s", uid);
 		disable_id_test(ses, node); 
+		#
+		# this is also an excellent place to schedule a flush of the temp
+		#  data including the exececution_history and connMetaData table
+		#
+		local exec_hist_id = fmt("%s:%s_%s", node, ses, pid);
+		schedule 10sec  { AUDITD_POLICY::clear_exec_hist(exec_hist_id) };
+
 		}
 
 	update_action(t_Info);
