@@ -130,7 +130,9 @@ function generic_f(data: string) : count
 	local tty = AUDITD_CORE::s_string( parts[23+fluentd_offset] );
 	local terminal = AUDITD_CORE::s_string( parts[24+fluentd_offset] );
 	local success = AUDITD_CORE::s_string( parts[25+fluentd_offset] );
-	local ext = AUDITD_CORE::s_string( parts[26+fluentd_offset] );	
+
+	local ext: AUDITD_CORE::string_return;
+	ext = AUDITD_CORE::s_string( parts[26+fluentd_offset] );	
 
 	event auditd_generic(index$data, action$data, ts$data, node$data, ses, pid, auid$data, comm$data, exe$data, a0$data, a1$data, a2$data, uid$data, gid$data, euid$data, egid$data, fsuid$data, fsgid$data, suid$data, sgid$data, ppid, tty$data, terminal$data, success$data, ext$data);
 
