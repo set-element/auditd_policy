@@ -1,8 +1,8 @@
 # util.bro  Scott Campbell 11/29/13
-	
-# 
+
+#
 # Various utility functions and constants used throughout the auditd infrastructure
-#  scripts.  For the time being this is not part of any particular name space 
+#  scripts.  For the time being this is not part of any particular name space
 #  but that will change when things settle out a bit.
 #
 
@@ -11,15 +11,16 @@ module AUDITD_CORE;
 @load host_core/health_check
 
 export {
-	const INFO_NULL  = "NULL";
+		const INFO_NULL  = "NULL";
 
         type identity: record {
-                ses:		int &default=-1;		# numeric session id or 'unset'
-                node:		string &default=INFO_NULL;      # what host is this happening on
-                idv:		vector of string &log;          # vector of identity values for current action
-                p_idv:		vector of string;               # vector for *previous* action
-		id_test:	count &default = 0;		# flag for identity transition checking: 0=F,1=F, >=2=T
-		id_flag:	vector of bool;			# mark changed idenity components: T=heightened, F=otherwise
+                ses:		int &default=-1;					# numeric session id or 'unset'
+                node:		string &default=INFO_NULL;      	# what host is this happening on
+				log_id:		string &log &default=INFO_NULL;			# session identifier for user during this identity's existence
+                idv:		vector of string &log;          	# vector of identity values for current action
+                p_idv:		vector of string;               	# vector for *previous* action
+				id_test:	count &default = 0;					# flag for identity transition checking: 0=F,1=F, >=2=T
+				id_flag:	vector of bool;						# mark changed idenity components: T=heightened, F=otherwise
                 };
 
         type Info: record {
@@ -62,7 +63,7 @@ export {
 	# Make bookeepng easier - note vector counting starts at zero!
 
 	## -- identity info (process) --
-	const v_auid  = 0;	# audit id, immutable even if id changes	
+	const v_auid  = 0;	# audit id, immutable even if id changes
 	const v_uid   = 1;	# user id
 	const v_gid   = 2;	# group id
 	const v_euid  = 3;	# effective user id
@@ -90,11 +91,11 @@ export {
 	global v16: vector of count = vector(2,3,4,5,6,7,8,9,10,11,12,13,14,15,16);
 	global v2s: vector of count = vector(2,4,6);
 
-        const ID_DEFAULT = "-1";
-        const zero_int: int = 0;
+    const ID_DEFAULT = "-1";
+    const zero_int: int = 0;
 
 	## These are token values that will represent a failed conversion
-	#   when I grow up I am going to use a data type that includes both 
+	#   when I grow up I am going to use a data type that includes both
 	#   a return value and an error code.
 	#
 	const ADDR_CONV_ERROR: addr = 127.4.3.2;
@@ -110,7 +111,7 @@ export {
 	const DATA_NOERROR:       count = 0;
 
 	### --- SOCKET --- ###
-	# The socket type will be used as a proxy for holding 
+	# The socket type will be used as a proxy for holding
 	#  information about a socket oriented event.
 	#
 	# for a0 of socket call define the /domain/
@@ -122,7 +123,7 @@ export {
 	#  this is both a handy reference and a way of making the data
 	#  more human readable....
 	#
-	const SOCK_STREAM: count = 1;	# stream socket 
+	const SOCK_STREAM: count = 1;	# stream socket
 	const SOCK_DGRAM: count  = 2;	# datagram socket
 	const SOCK_RAW: count    = 3;	# raw-protocol interface
 	#
@@ -160,9 +161,9 @@ export {
 
         global update_action: function(i: Info);
         global build_identity: function(auid: string, uid: string, gid: string, euid: string, egid: string, fsuid: string, fsgid: string, suid: string, sgid: string) : vector of string;
-	global lock_id_test: function(ses: int, node: string) : count;
-	global activate_id_test: function(ses: int, node: string) : count;
-	global disable_id_test: function(ses: int, node: string) : count;
+		global lock_id_test: function(ses: int, node: string) : count;
+		global activate_id_test: function(ses: int, node: string) : count;
+		global disable_id_test: function(ses: int, node: string) : count;
         global update_identity: function(ses: int, node: string, pid: int, ppid: int, tvid: vector of string) : count;
 
         global delete_item: event(key: string);
@@ -170,13 +171,13 @@ export {
         global string_test: function(s: string) : bool;
         global int_test: function(i: int) : bool;
         global time_test: function(t: time) : bool;
-	global s_port: function(s: string) : port;
-	global s_int: function(s: string) : int;
-	global s_addr: function(s: string) : addr;
-	global s_string: function(s: string) : string_return;
-	global s_time: function(s: string) : time_return;
+		global s_port: function(s: string) : port;
+		global s_int: function(s: string) : int;
+		global s_addr: function(s: string) : addr;
+		global s_string: function(s: string) : string_return;
+		global s_time: function(s: string) : time_return;
         global last_record: function(index: string): count;
-	global translate_id: function(id: int) : string;
+		global translate_id: function(id: int) : string;
 
 	} # end export
 
@@ -238,7 +239,7 @@ function s_string(s: string) : string_return
 
 	# now scrape out all the binary goo that might still
 	#   be sitting around waiting to cause problems for us ....
-	ret_str$data = escape_string(ret_str$data);	
+	ret_str$data = escape_string(ret_str$data);
 	ret_str$ret = DATA_NOERROR;
 
 	# and make sure that we are returning *something* in the data
@@ -257,7 +258,7 @@ function s_count(s: string) : count
 
 	if ( mpr$matched )
 		ret_val =  to_count(s);
-	else 
+	else
 		#print fmt("COUNT PATTERN ERROR: %s", s);
 
 	return ret_val;
@@ -289,7 +290,7 @@ function s_port(s: string) : port
 
 	if ( p_pm$matched ) {
 		ret_val = to_port(t_port);
-		}	
+		}
 	else {
 		local c_pm = match_pattern( t_port, count_match );
 
@@ -387,13 +388,9 @@ function get_identity_obj(ses: int, node: string, pid: int, ppid: int) : identit
 
         if ( key in identityState )
                 t_identity = identityState[key];
-	#else {
-	#	# Look up the identity of the parent object instead
-        #	local alt_key = get_identity_id(ses, node, ppid);
-
-	#	if ( alt_key in identityState )
-        #        	t_identity = identityState[alt_key];
-	#	}
+		else {
+			t_identity$log_id = unique_id("AU");
+			}
 
         return t_identity;
 } # end get_identity_obj
@@ -434,7 +431,7 @@ function update_action(i: Info)
 {
         # Update the indexed Info obj with the provided t_Info
         local key = get_action_id(i$index,i$node);
-	
+
         # update the record values for new *non-default* entries
         if ( key in actionState ) {
 
