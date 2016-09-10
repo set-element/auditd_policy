@@ -524,16 +524,6 @@ function update_action(i: Info)
                 }
 }
 
-function copy_identity(index: string, node: string) : Info
-{
-        # Take identity and sync it with the action structure
-        local t_Info = get_action_obj(index,node);
-        local t_identity = get_identity_obj(t_Info$ses, t_Info$node, t_Info$pid, t_Info$ppid);
-
-        t_Info$i = t_identity;
-        return t_Info;
-}
-
 function sync_identity(index: string, node: string) : Info
 {
         # Take identity and sync it with the action structure
