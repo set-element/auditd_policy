@@ -25,7 +25,7 @@ export {
 
 event auditd_execve(index: string, action: string, ts: time, node: string, ses: int, pid: int, argc: int, argument: string)
 	{
-	# Beta event
+	# Secondary event
 	# look up the related record
 	local t_Info = get_action_obj(index,node);
 
@@ -63,7 +63,7 @@ event auditd_execve(index: string, action: string, ts: time, node: string, ses: 
 
 event auditd_generic(index: string, action: string, ts: time, node: string, ses: int, pid: int, auid: string, comm: string, exe: string, a0: string, a1: string, a2: string, uid: string, gid: string, euid: string, egid: string, fsuid: string, fsgid: string, suid: string, sgid: string, ppid: int, tty: string, terminal: string, success: string, ext: string)
 	{
-	# Alpha event
+	# Primary event
 	# look up the related record
 	local t_Info = get_action_obj(index,node);
 
@@ -136,7 +136,7 @@ event auditd_generic(index: string, action: string, ts: time, node: string, ses:
 
 event auditd_place(index: string, action: string, ts: time, node: string, ses: int, pid: int, cwd: string, path_name: string, inode: int, mode: int, ouid: string, ogid: string)
 	{
-	# Beta event
+	# Secondary event
 	# ouid/ogid: Refer to the UID and GID of the inode itself. 
 	#
 	# look up the related record
@@ -176,6 +176,7 @@ event auditd_place(index: string, action: string, ts: time, node: string, ses: i
 event auditd_saddr(index: string, action: string, ts: time, node: string, ses: int, pid: int, saddr: string)
 	{
 
+	# Secondary event
 	# most of the work here will be in decoding the saddr structure
 	#
 	# common types:
@@ -259,6 +260,7 @@ event auditd_saddr(index: string, action: string, ts: time, node: string, ses: i
 
 event auditd_syscall(index: string, action: string, ts: time, node: string, ses: int, pid: int, auid: string, syscall: string, key: string, comm: string, exe: string, a0: string, a1: string, a2: string, uid: string, gid: string, euid: string, egid: string, fsuid: string, fsgid: string, suid: string, sgid: string, ppid: int, tty: string, success: string, ext: string)
 	{
+	# Primary event
 	# look up the related record
 	local t_Info = get_action_obj(index,node);
 
@@ -332,6 +334,7 @@ event auditd_syscall(index: string, action: string, ts: time, node: string, ses:
 
 event auditd_user(index: string, action: string, ts: time, node: string, ses: int, pid: int, auid: string, euid: string, egid: string, fsuid: string, fsgid: string, suid: string, sgid: string, uid: string, gid: string, exe: string, terminal: string, success: string, ext: string, msg: string)
 	{
+	# Primary event
 	# look up the related record
 	local t_Info = get_action_obj(index,node);
 
