@@ -16,11 +16,11 @@ export {
         type identity: record {
                 ses:		int &default=-1;					# numeric session id or 'unset'
                 node:		string &default=INFO_NULL;      	# what host is this happening on
-				log_id:		string &log &default=INFO_NULL;			# session identifier for user during this identity's existence
+		log_id:		string &log &default=INFO_NULL;			# session identifier for user during this identity's existence
                 idv:		vector of string &log;          	# vector of identity values for current action
                 p_idv:		vector of string;               	# vector for *previous* action
-				id_test:	count &default = 0;					# flag for identity transition checking: 0=F,1=F, >=2=T
-				id_flag:	vector of bool;						# mark changed idenity components: T=heightened, F=otherwise
+		id_test:	count &default = 0;					# flag for identity transition checking: 0=F,1=F, >=2=T
+		id_flag:	vector of bool;						# mark changed idenity components: T=heightened, F=otherwise
                 };
 
         type Info: record {
@@ -154,7 +154,7 @@ export {
         global get_identity_id: function(ses: int, node: string) : string;
 
         global get_action_obj: function(index: string, node: string) : Info;
-        global get_identity_obj: function(ses: int, node: string, pid: int, ppid: int) : identity;
+        global get_identity_obj: function(ses: int, node: string) : identity;
 
         global sync_identity: function(index: string, node: string) : Info;
         global copy_identity: function(index: string, node: string) : Info;
@@ -381,18 +381,25 @@ function get_action_obj(index: string, node: string) : Info
 } # end get_action_obj
 
 
-function get_identity_obj(ses: int, node: string, pid: int, ppid: int) : identity
+function get_identity_obj(ses: int, node: string) : identity
 {
         local key = get_identity_id(ses, node);
         local t_identity: identity;
 
-        if ( key in identityState )
+        if ( key in identityState ) {
                 t_identity = identityState[key];
-		else {
-			t_identity$log_id = unique_id("AU");
-			}
 
+		# if the identity is blank, fill it in
+		if (t_identity$log_id == INFO_NULL)
+			t_identity$log_id = unique_id("AU");
+		}
+	else {
+		t_identity$log_id = unique_id("AU");
+		}
+
+	identityState[key] = t_identity;
         return t_identity;
+
 } # end get_identity_obj
 
 function last_record(index: string): count
@@ -524,11 +531,21 @@ function update_action(i: Info)
                 }
 }
 
+function copy_identity(index: string, node: string) : Info
+{
+        # Take identity and sync it with the action structure
+        local t_Info = get_action_obj(index,node);
+        local t_identity = get_identity_obj(t_Info$ses, t_Info$node);
+
+        t_Info$i = t_identity;
+        return t_Info;
+}
+
 function sync_identity(index: string, node: string) : Info
 {
         # Take identity and sync it with the action structure
         local t_Info = get_action_obj(index,node);
-        local t_identity = get_identity_obj(t_Info$ses, t_Info$node, t_Info$pid, t_Info$ppid);
+        local t_identity = get_identity_obj(t_Info$ses, t_Info$node);
 
         t_Info$i = t_identity;
 
@@ -595,11 +612,6 @@ function build_identity(auid: string, uid: string, gid: string, euid: string, eg
         #  useful form for consumption by other heuristics.
         #
         local t_idv: vector of string = vector(auid, uid, gid, euid, egid, suid, sgid, fsuid, fsgid);
-        #local t_identity: identity;
-
-        #t_identity$ses = ses;
-        #t_identity$node = node;
-        #t_identity$idv = t_idv;
 
         return t_idv;
 }
@@ -669,18 +681,9 @@ function update_identity(ses: int, node: string, pid: int, ppid: int, tvid: vect
 {
         # Update values for the identity object.  If the obj is not in the
         #   identityState table, create it
-        local key = get_identity_id(ses, node);
-        local t_identity: identity;
-
-        if ( key == INFO_NULL )
-                return 2;
-
-        # Pull up old data if it exists
-        if ( key in identityState ) {
-                t_identity = identityState[key];
-                }
-        #else
-        #       print fmt("key %s NOT in identityState", key);
+	# 
+	local key = get_identity_id(ses, node);
+        local t_identity = get_identity_obj(ses,node);
 
         # now update the values
         if ( int_test(ses) )
@@ -703,7 +706,6 @@ function update_identity(ses: int, node: string, pid: int, ppid: int, tvid: vect
                 }
 
         identityState[key] = t_identity;
-        #print fmt("ID UPDATE: %s -> %s", t_identity$p_idv, t_identity$idv);
 
         return 0;
 } # end update_identity
