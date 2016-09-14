@@ -12,7 +12,6 @@
 #
 @load auditd_policy/util
 @load auditd_policy/auditd_core
-#@load auditd_policy/auditd_net
 
 module AUDITD_POLICY;
 #module AUDITD_CORE;
@@ -62,7 +61,9 @@ export {
 	# connection_log is a logging construct that holds some of the socket_data
 	#  info as well as type fixed data like addr/port and identity info
 	type connection_log: record {
+		ts: time &log;
 		cid: conn_id &log;
+		log_id: string &default="NULL" &log;
 		protocol: string &default="NULL" &log;
 		state: string &default="NULL" &log;
 		ses: int &default=0 &log;
@@ -583,7 +584,7 @@ function network_register_listener(inf: AUDITD_CORE::Info) : count
 		t_socket_data = socket_lookup[index];
 	else
 		return ret_val;
-
+print fmt("t_socket_data: %s", t_socket_data);
 	# sanity check the data
 	if ( t_socket_data$domain == "PF_INET" || t_socket_data$domain == "PF_INET6" ) {
 		ret_val = 1;
@@ -656,8 +657,9 @@ function network_register_listener(inf: AUDITD_CORE::Info) : count
 	else
 		conn_log$cid$orig_h = to_addr("0.0.0.0");
 
-
+	conn_log$ts =           inf$ts;
 	conn_log$state = 	inf$key;
+	conn_log$log_id = 	inf$i$log_id;
 	conn_log$protocol = 	log_protocol;
 	conn_log$ses = 		inf$i$ses;
 	conn_log$node = 	inf$i$node;
@@ -772,9 +774,11 @@ function network_register_conn(inf: AUDITD_CORE::Info) : count
 	else
 		conn_log$cid$orig_h = to_addr("0.0.0.0");
 
+	conn_log$ts = 		inf$ts;
 	conn_log$state = 	inf$key;
+	conn_log$log_id =       inf$i$log_id;
 	conn_log$protocol = 	log_protocol;
-	conn_log$ses = 		inf$i$ses;
+	conn_log$ses = 		inf$ses;
 	conn_log$node = 	inf$i$node;
 	conn_log$uid = 		inf$i$idv[AUDITD_CORE::v_uid];
 	conn_log$gid = 		inf$i$idv[AUDITD_CORE::v_gid];
@@ -805,55 +809,55 @@ function file_error(inf: AUDITD_CORE::Info)
 		case "SYS_FILE_OPEN_ERR":
 
 			if ( t_fmd$open_error < SYS_FILE_OPEN_THRESHOLD ) 
-				t_fmd$open_error_set = fmt("%s %s/%s", t_fmd$open_error_set, inf$cwd, inf$path_name);
+				t_fmd$open_error_set = fmt("%s %s", t_fmd$open_error_set, inf$path_name);
 
 			if ( ++t_fmd$open_error == SYS_FILE_OPEN_THRESHOLD ) {
 				NOTICE([$note=AUDITD_FileMetadata,
-					$msg=fmt("SYS_FILE_OPEN_ERR %s %s %s errors %s", inf$ses, inf$i$idv[1], SYS_FILE_OPEN_THRESHOLD, t_fmd$open_error_set )]);
+					$msg=fmt("SYS_FILE_OPEN_ERR %s %s %s errors %s", inf$i$log_id, inf$i$idv[1], SYS_FILE_OPEN_THRESHOLD, t_fmd$open_error_set )]);
 				}
 			break;
 
 		case "SYS_FILE_CREATE_ERR":
 
 			if ( t_fmd$create_error < SYS_FILE_CREATE_THRESHOLD ) 
-				t_fmd$create_error_set = fmt("%s %s/%s", t_fmd$create_error_set, inf$cwd, inf$path_name);
+				t_fmd$create_error_set = fmt("%s /%s", t_fmd$create_error_set, inf$path_name);
 
 			if ( ++t_fmd$create_error == SYS_FILE_CREATE_THRESHOLD ) {
 				NOTICE([$note=AUDITD_FileMetadata,
-					$msg=fmt("SYS_FILE_CREATE_ERR %s %s %s errors %s", inf$ses, inf$i$idv[1], SYS_FILE_CREATE_THRESHOLD, t_fmd$create_error_set )]);
+					$msg=fmt("SYS_FILE_CREATE_ERR %s %s %s errors %s", inf$i$log_id, inf$i$idv[1], SYS_FILE_CREATE_THRESHOLD, t_fmd$create_error_set )]);
 				}
 			break;
 
 		case "SYS_FILE_MOD_ERR":
 
 			if ( t_fmd$mod_error < SYS_FILE_MOD_THRESHOLD ) 
-				t_fmd$mod_error_set = fmt("%s %s/%s", t_fmd$mod_error_set, inf$cwd, inf$path_name);
+				t_fmd$mod_error_set = fmt("%s /%s", t_fmd$mod_error_set, inf$path_name);
 
 			if ( ++t_fmd$mod_error == SYS_FILE_MOD_THRESHOLD ) {
 				NOTICE([$note=AUDITD_FileMetadata,
-					$msg=fmt("SYS_FILE_MOD_ERR %s %s %s errors %s", inf$ses, inf$i$idv[1], SYS_FILE_MOD_THRESHOLD, t_fmd$mod_error_set )]);
+					$msg=fmt("SYS_FILE_MOD_ERR %s %s %s errors %s", inf$i$log_id, inf$i$idv[1], SYS_FILE_MOD_THRESHOLD, t_fmd$mod_error_set )]);
 				}
 			break;
 
 		case "SYS_FILE_PERM_ERR":
 
 			if ( t_fmd$mod_error < SYS_FILE_MOD_THRESHOLD ) 
-				t_fmd$mod_error_set = fmt("%s %s/%s", t_fmd$mod_error_set, inf$cwd, inf$path_name);
+				t_fmd$mod_error_set = fmt("%s /%s", t_fmd$mod_error_set, inf$path_name);
 
 			if ( ++t_fmd$mod_error == SYS_FILE_MOD_THRESHOLD ) {
 				NOTICE([$note=AUDITD_FileMetadata,
-					$msg=fmt("SYS_FILE_MOD_ERR %s %s %s errors %s", inf$ses, inf$i$idv[1], SYS_FILE_MOD_THRESHOLD, t_fmd$mod_error_set )]);
+					$msg=fmt("SYS_FILE_MOD_ERR %s %s %s errors %s", inf$i$log_id, inf$i$idv[1], SYS_FILE_MOD_THRESHOLD, t_fmd$mod_error_set )]);
 				}
 			break;
 
 		case "SYS_FILE_DELETE_ERR":
 
 			if ( t_fmd$delete_error < SYS_FILE_DELETE_THRESHOLD ) 
-				t_fmd$delete_error_set = fmt("%s %s/%s", t_fmd$delete_error_set, inf$cwd, inf$path_name);
+				t_fmd$delete_error_set = fmt("%s /%s", t_fmd$delete_error_set, inf$path_name);
 
 			if ( ++t_fmd$delete_error == SYS_FILE_DELETE_THRESHOLD ) {
 				NOTICE([$note=AUDITD_FileMetadata,
-					$msg=fmt("SYS_FILE_DELETE_ERR %s %s %s errors %s", inf$ses, inf$i$idv[1], SYS_FILE_DELETE_THRESHOLD, t_fmd$delete_error_set )]);
+					$msg=fmt("SYS_FILE_DELETE_ERR %s %s %s errors %s", inf$i$log_id, inf$i$idv[1], SYS_FILE_DELETE_THRESHOLD, t_fmd$delete_error_set )]);
 				}
 			break;
 
