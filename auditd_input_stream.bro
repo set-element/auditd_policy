@@ -32,7 +32,7 @@ export {
 		d: string;
 	};
 
-	const data_file = "/home/bro/logs/RAW/AUDIT_DATA_0" &redef;
+	const data_file = "/" &redef;
 	const DATANODE = F &redef;
 
 	const fluentd_offset = 1 &redef;
@@ -68,14 +68,15 @@ function execve_f(data: string) : count
 	{
 	# data format:
 	# 1492:2 EXECVE_OBJ EXECVE 1357649135.905 3 %20/bin/csh%20-f%20/usr/common/usg/bin/nersc_host
+	# NERSCAUD 11193291:5:2 EXEC_OBJ EXECVE 1473900370.877 crt-insec-w1.nersc.gov 56408 8809 2 NULL
 	local parts = split_string(data, kv_splitter);
 
-	if ( |parts| < 9 ) {
-		print fmt("execve_f parse error for %s", data);
-		return 1;
-		}
+	#if ( |parts| < 7 ) {
+	#	print fmt("execve_f parse error for %s", data);
+	#	return 1;
+	#	}
 
-	local index = AUDITD_CORE::s_string( parts[0+fluentd_offset] );	# form a:b, a=action count, b=which record in action
+	local index = AUDITD_CORE::s_string( parts[0+fluentd_offset] );		# form a:b, a=action count, b=which record in action
 	local flavor = AUDITD_CORE::s_string( parts[1+fluentd_offset] );	# base object type
 	local action = AUDITD_CORE::s_string( parts[2+fluentd_offset] );	# the thing that happens, also called 'event' in traditional auditd docs
 	local ts = AUDITD_CORE::s_time( parts[3+fluentd_offset] );		# time of record
@@ -86,7 +87,8 @@ function execve_f(data: string) : count
 	local argc = AUDITD_CORE::s_int( parts[7+fluentd_offset] );		# number of arguments for exec (starts at 1)
 	local argument = AUDITD_CORE::s_string( parts[8+fluentd_offset] );	# total argument string
 
-	#event auditd_execve(index$data, action$data, ts$data, node$data, ses, pid, argc, argument$data);
+	event AUDITD_CORE::auditd_execve(index$data, action$data, ts$data, node$data, ses, pid, argc, argument$data);
+
 	#event AUDITD_CORE::auditd_execve(index, action, ts, node, ses, pid, argc, argument);
 
 	return 0;
@@ -98,10 +100,10 @@ function generic_f(data: string) : count
 	# -1 -1 -1 -1 NULL NULL NULL 0
 	local parts = split_string(data, kv_splitter);
 
-	if ( |parts| < 27 ) {
-		print fmt("generic_f parse error for %s", data);
-		return 1;
-		}
+	#if ( |parts| < 25 ) {
+	#	print fmt("generic_f parse error for %s", data);
+	#	return 1;
+	#	}
 
 	local index = AUDITD_CORE::s_string( parts[0+fluentd_offset] );	# form a:b, a=action count, b=which record in action
 	local flavor = AUDITD_CORE::s_string( parts[1+fluentd_offset] );	# base object type
@@ -134,7 +136,7 @@ function generic_f(data: string) : count
 	local ext: AUDITD_CORE::string_return;
 	ext = AUDITD_CORE::s_string( parts[26+fluentd_offset] );	
 
-	event auditd_generic(index$data, action$data, ts$data, node$data, ses, pid, auid$data, comm$data, exe$data, a0$data, a1$data, a2$data, uid$data, gid$data, euid$data, egid$data, fsuid$data, fsgid$data, suid$data, sgid$data, ppid, tty$data, terminal$data, success$data, ext$data);
+	event AUDITD_CORE::auditd_generic(index$data, action$data, ts$data, node$data, ses, pid, auid$data, comm$data, exe$data, a0$data, a1$data, a2$data, uid$data, gid$data, euid$data, egid$data, fsuid$data, fsgid$data, suid$data, sgid$data, ppid, tty$data, terminal$data, success$data, ext$data);
 
 	return 0;
 	}
@@ -144,12 +146,14 @@ function place_f(data: string) : count
 	# 13:2 PLACE_OBJ CWD 1357669891.417 mndlint01 /chos/global/project/projectdirs/mendel/ganglia NULL -1 -1
 	# 13:3 PLACE_OBJ PATH 1357669891.417 mndlint01 NULL rrds/Mendel%20Compute/mc0867.nersc.gov/.cpu_idle.rrd.
 	#                       6ITCyp 252651183 0100600 unknown(65534) unknown(65533)
+	# NERSCAUD 11193291:5:3 PLACE_OBJ CWD 1473900370.877 crt-insec-w1.nersc.gov 56408 8809 %2Froot (null) NULL (null) NULL NULL
+	# NERSCAUD 11193291:5:4 PLACE_OBJ PATH 1473900370.877 crt-insec-w1.nersc.gov 56408 8809 (null) %2Fbin%2Fcat 1048628 file%2C755 root root
 	local parts = split_string(data, kv_splitter);
 
-	if ( |parts| < 13 ) {
-		print fmt("place_f parse error for %s", data);
-		return 1;
-		}
+	#if ( |parts| < 11 ) {
+	#	print fmt("place_f parse error for %s", data);
+	#	return 1;
+	#	}
 	local index = AUDITD_CORE::s_string( parts[0+fluentd_offset] );	# form a:b, a=action count, b=which record in action
 	local flavor = AUDITD_CORE::s_string( parts[1+fluentd_offset] );	# base object type
 	local action = AUDITD_CORE::s_string( parts[2+fluentd_offset] );	# the thing that happens, also called 'event' in traditional auditd docs
@@ -165,7 +169,7 @@ function place_f(data: string) : count
 	local ouid = AUDITD_CORE::s_string( parts[11+fluentd_offset] );
 	local ogid = AUDITD_CORE::s_string( parts[12+fluentd_offset] );
 
-	event auditd_place(index$data, action$data, ts$data, node$data, ses, pid, cwd$data, path_name$data, inode, mode, ouid$data, ogid$data);
+	event AUDITD_CORE::auditd_place(index$data, action$data, ts$data, node$data, ses, pid, cwd$data, path_name$data, inode, mode, ouid$data, ogid$data);
 	return 0;
 	}
 
@@ -176,10 +180,10 @@ function saddr_f(data: string) : count
 	# 6631974:2:2 SADDR_OBJ SOCKADDR 1430353738.133 orange-m.nersc.gov 64003 8055 inet%20host%3A127.0.0.1%20serv%3A53
 	local parts = split_string(data, kv_splitter);
 
-	if ( |parts| < 8 ) {
-		print fmt("saddr_f parse error for %s", data);
-		return 1;
-		}
+	#if ( |parts| < 7 ) {
+	#	print fmt("saddr_f parse error for %s", data);
+	#	return 1;
+	#	}
 	local index = AUDITD_CORE::s_string( parts[0+fluentd_offset] );	# form a:b, a=action count, b=which record in action
 	local flavor = AUDITD_CORE::s_string( parts[1+fluentd_offset] );	# base object type
 	local action = AUDITD_CORE::s_string( parts[2+fluentd_offset] );	# the thing that happens, also called 'event' in traditional auditd docs
@@ -190,7 +194,7 @@ function saddr_f(data: string) : count
 	#
 	local saddr = AUDITD_CORE::s_string( parts[7+fluentd_offset] );	# address object (local or inet)
 
-	event auditd_saddr(index$data, action$data, ts$data, node$data, ses, pid, saddr$data);
+	event AUDITD_CORE::auditd_saddr(index$data, action$data, ts$data, node$data, ses, pid, saddr$data);
 	return 0;
 	}
 
@@ -200,10 +204,10 @@ function syscall_f(data: string) : count
 	#                           1570 1a4 8000 root root root root root root root root 19220 19206 NO_TTY chmod yes 0
 	local parts = split_string(data, kv_splitter);
 
-	if ( |parts| < 27 ) {
-		print fmt("syscall_f parse error for %s", data);
-		return 1;
-		}
+	#if ( |parts| < 25 ) {
+	#	print fmt("syscall_f parse error for %s", data);
+	#	return 1;
+	#	}
 	local index = AUDITD_CORE::s_string( parts[0+fluentd_offset] );	# form a:b, a=action count, b=which record in action
 	local flavor = AUDITD_CORE::s_string( parts[1+fluentd_offset] );	# base object type
 	local action = AUDITD_CORE::s_string( parts[2+fluentd_offset] );	# the thing that happens, also called 'event' in traditional auditd docs
@@ -234,7 +238,7 @@ function syscall_f(data: string) : count
 	local success = AUDITD_CORE::s_string( parts[25+fluentd_offset] );
 	local ext = AUDITD_CORE::s_string( parts[26+fluentd_offset] );
 
-	event auditd_syscall(index$data, action$data, ts$data, node$data, ses, pid, auid$data, syscall$data, key$data, comm$data, exe$data, a0$data, a1$data, a2$data, uid$data, gid$data, euid$data, egid$data, fsuid$data, fsgid$data, suid$data, sgid$data, ppid, tty$data, success$data, ext$data);
+	event AUDITD_CORE::auditd_syscall(index$data, action$data, ts$data, node$data, ses, pid, auid$data, syscall$data, key$data, comm$data, exe$data, a0$data, a1$data, a2$data, uid$data, gid$data, euid$data, egid$data, fsuid$data, fsgid$data, suid$data, sgid$data, ppid, tty$data, success$data, ext$data);
 	return 0;
 	}
 
@@ -244,10 +248,10 @@ function user_f(data: string) : count
 	#                           /pts/1 /bin/su
 	local parts = split_string(data, kv_splitter);
 
-	if ( |parts| < 20 ) {
-		print fmt("user_f parse error for %s", data);
-		return 1;
-		}
+	#if ( |parts| < 8 ) {
+	#	print fmt("user_f parse error for %s", data);
+	#	return 1;
+	#	}
 	local index = AUDITD_CORE::s_string( parts[0+fluentd_offset] );	# form a:b, a=action count, b=which record in action
 	local flavor = AUDITD_CORE::s_string( parts[1+fluentd_offset] );	# base object type
 	local action = AUDITD_CORE::s_string( parts[2+fluentd_offset] );	# the thing that happens, also called 'event' in traditional auditd docs
@@ -272,7 +276,7 @@ function user_f(data: string) : count
 	#local msg = AUDITD_CORE::s_string( parts[20+fluentd_offset] );
 	local msg = AUDITD_CORE::s_string("NODATA");
 
-	event auditd_user(index$data, action$data, ts$data, node$data, ses, pid, auid$data, euid$data, egid$data, fsuid$data, fsgid$data, suid$data, sgid$data, uid$data, gid$data, exe$data, terminal$data, success$data, ext$data, msg$data);
+	event AUDITD_CORE::auditd_user(index$data, action$data, ts$data, node$data, ses, pid, auid$data, euid$data, egid$data, fsuid$data, fsgid$data, suid$data, sgid$data, uid$data, gid$data, exe$data, terminal$data, success$data, ext$data, msg$data);
 	return 0;
 	}
 
@@ -292,6 +296,7 @@ event auditdLine(description: Input::EventDescription, tpe: Input::Event, LV: li
 	++input_count;
 
 	# Data line looks like:
+	# NERSCAUD 11192999:2:2 SADDR_OBJ SOCKADDR 1473899932.905 crt-insec-w1.nersc.gov 33878 8715 in
 	# 9:1 SYSCALL_OBJ SYSCALL 1357669891.416 mndlint01 ...
 	# ID, GENERAL-TYPE, TYPE, TIME, HOST ...
 	# Each of the general types has a given structure, and the index ties all
@@ -304,9 +309,11 @@ event auditdLine(description: Input::EventDescription, tpe: Input::Event, LV: li
 	#   if they are not here, skip the line
 	if ( |parts| > 7 ) {
 		event_name = parts[1 + fluentd_offset];
-
+		
 		if ( event_name in dispatcher ) 
 			dispatcher[event_name](LV$d);
+		else
+			print fmt("BAD EVENT NAME: %s", event_name);
 		}
 
 	}
