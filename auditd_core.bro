@@ -21,6 +21,14 @@ export {
 	redef enum Log::ID += { LOG };
 
 	global idLibraryWhitelist: set[string] = set("/usr/sbin/crond") &redef;
+
+	global auditd_execve: event(index: string, action: string, ts: time, node: string, ses: int, pid: int, argc: int, argument: string);
+	global auditd_generic: event(index: string, action: string, ts: time, node: string, ses: int, pid: int, auid: string, comm: string, exe: string, a0: string, a1: string, a2: string, uid: string, gid: string, euid: string, egid: string, fsuid: string, fsgid: string, suid: string, sgid: string, ppid: int, tty: string, terminal: string, success: string, ext: string);
+	global auditd_place: event(index: string, action: string, ts: time, node: string, ses: int, pid: int, cwd: string, path_name: string, inode: int, mode: int, ouid: string, ogid: string);
+	global auditd_saddr: event(index: string, action: string, ts: time, node: string, ses: int, pid: int, saddr: string);
+	global auditd_syscall: event(index: string, action: string, ts: time, node: string, ses: int, pid: int, auid: string, syscall: string, key: string, comm: string, exe: string, a0: string, a1: string, a2: string, uid: string, gid: string, euid: string, egid: string, fsuid: string, fsgid: string, suid: string, sgid: string, ppid: int, tty: string, success: string, ext: string);
+	global auditd_user: event(index: string, action: string, ts: time, node: string, ses: int, pid: int, auid: string, euid: string, egid: string, fsuid: string, fsgid: string, suid: string, sgid: string, uid: string, gid: string, exe: string, terminal: string, success: string, ext: string, msg: string);
+
 	}
 
 event auditd_execve(index: string, action: string, ts: time, node: string, ses: int, pid: int, argc: int, argument: string)
@@ -45,6 +53,9 @@ event auditd_execve(index: string, action: string, ts: time, node: string, ses: 
 	
 	if ( string_test(argument) )
 		t_Info$arg_t = argument;
+
+	if ( string_test(index) )
+		t_Info$index = index;
 
 	update_action(t_Info);
 
@@ -116,6 +127,9 @@ event auditd_generic(index: string, action: string, ts: time, node: string, ses:
 	if ( string_test(ext) )
 		t_Info$ext = ext;
 
+	if ( string_test(index) )
+		t_Info$index = index;
+
 	# identification
 	local t_id = build_identity(auid, uid, gid, euid, egid, fsuid, fsgid, suid, sgid);
 	update_identity(ses,node,pid,ppid,t_id);
@@ -159,6 +173,9 @@ event auditd_place(index: string, action: string, ts: time, node: string, ses: i
 	if ( string_test(ogid) )
 		t_Info$ogid = ogid;
 
+	if ( string_test(index) )
+		t_Info$index = index;
+
 	update_action(t_Info);
 
 	# if the last record, print it
@@ -193,6 +210,9 @@ event auditd_saddr(index: string, action: string, ts: time, node: string, ses: i
 	
 	local t_Info = get_action_obj(index,node);
 		t_Info$ts = ts;
+
+	if ( string_test(index) )
+		t_Info$index = index;
 
 	# decode the saddr structure
 	local t_saddr = unescape_URI(saddr);
