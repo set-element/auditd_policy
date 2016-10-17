@@ -1,7 +1,9 @@
 
+module AUDITD_POLICY;
 
 export {
 	redef enum Log::ID += { LOGCONN };
+        redef enum Log::ID += { LOGLIST };
 
 	redef enum Notice::Type += {
 		AUDITD_SocketOpen,
@@ -9,9 +11,6 @@ export {
 		AUDITD_POLICY_HostScan,
 		AUDITD_POLICY_PortScan,
 		};
-
-	# tag for file loaded
-	const AUDITD_POLICY_LOAD = T;
 
 	# socket_data is struct to maintain state across the (con/de)struction
 	#   of network related system calls.
@@ -61,8 +60,8 @@ export {
 	# short term mapping designed to live for
 	#   action duration
 	global socket_lookup: table[string] of socket_data &write_expire=syscall_flush_interval;
-	#
 	global network_register_listener: function(inf: AUDITD_CORE::Info): count;
+	global syscall_connect: function(inf: AUDITD_CORE::Info) : count;
 	#
 	# Interval that ports and hosts live in the local CMD object
 	global cmd_flush_interval: interval = 90 sec &redef;
@@ -75,7 +74,7 @@ export {
 	# Something to hold the port list
 	type port_rec: record {
 		p: set[string];
-	}
+	};
 
 	# Per-host data about network activity
 	type connMetaData: record {
@@ -111,6 +110,28 @@ redef net_listen_syscalls += { "bind", "accept", };
 # ----- # ----- #
 #      Functions and Events
 # ----- # ----- #
+# This event currently in holding - might not need it
+
+event syscall_flush(index: string)
+        {
+        local t_socket_data: socket_data;
+        local td = time_to_double(network_time());
+
+        if ( index in socket_lookup ) {
+                # look up the current socket_data struct and if it is
+                #  not been touched, remove it.
+                t_socket_data = socket_lookup[index];
+
+                if ( (td - time_to_double(t_socket_data$ts)) > 20 )
+                        delete socket_lookup[index];
+                else
+                        # the timestamp on the socket_data struct has been moved since creation
+                        #  time.  schedule a re-check
+                        schedule syscall_flush_interval { syscall_flush(index) };
+                }
+
+        return;
+        }
 
 # Fill out an empty connMetaData object
 function init_cmd() : connMetaData
@@ -145,6 +166,7 @@ event del_cmd_host(index: string, host: string)
 			delete cmd$host_scan[host];
 
 		connMetaDataTable[index] = cmd;
+		}
 	}
 
 function add_cmd_host(index: string, host: string) : count
@@ -182,8 +204,11 @@ event delete_cmd_port(index: string, host: string, prt: string)
 
 			#  port_scan: table[string] of port_rec;
 			if ( host in cmd$port_scan ) {
-				if ( prt in cmd$port_scan[host] ) {
-					delete cmd$port_scan[host]$prt;
+				local pr = cmd$port_scan[host];
+
+				if ( prt in pr$p ) {
+					delete pr$p[prt];
+					cmd$port_scan[host] = pr;
 					}
 				}
 			connMetaDataTable[index] = cmd;
@@ -203,19 +228,19 @@ function add_cmd_port(index: string, host: string, prt: string) : count
 		# port_rec holds a set of string
 		if (host in t) {
 			# not new host
-			if ( prt !in t[host]) {
+			if ( prt !in t[host]$p ) {
 				# add the port only if new
-				add t[host]$p$prt;
-				schedule cmd_flush_interval { del_cmd_port(index, host, prt) };
+				add t[host]$p[prt];
+				schedule cmd_flush_interval { delete_cmd_port(index, host, prt) };
 				connMetaDataTable[index] = cmd;
-				ret_val = |t[host]$prt|;
+				ret_val = |t[host]$p|;
 				}
 			}
 		else {
 			# new host
 			local t_pr: port_rec;
-			add t_pr$p$prt;
-			schedule cmd_flush_interval { del_cmd_port(index, host, prt) };
+			add t_pr$p[prt];
+			schedule cmd_flush_interval { delete_cmd_port(index, host, prt) };
 			connMetaDataTable[index] = cmd;
 			ret_val = 1;
 			}
@@ -472,9 +497,7 @@ function syscall_connect(inf: AUDITD_CORE::Info) : count
 
 	#
 	# Now do port scan detection
-	# new port?
-	add_cmd_port(index: string, host: string, prt: string) : count
-
+	#
 	if ( add_cmd_port(cmdIndex,inf$s_host,inf$s_serv) == SYS_NET_PORTSCAN_THRESHOLD ) {
 
 		local t_cps = "";
@@ -783,3 +806,14 @@ function syscall_listen(inf: AUDITD_CORE::Info) : count
 
 				return 0;
 				}
+
+event bro_init()
+	{
+	Log::create_stream(AUDITD_POLICY::LOGCONN, [$columns=connection_log]);
+	local filter_c: Log::Filter = [$name="default", $path="auditd_host_conn"];
+	Log::add_filter(LOGCONN, filter_c);
+
+	Log::create_stream(AUDITD_POLICY::LOGLIST, [$columns=connection_log]);
+	local filter_l: Log::Filter = [$name="default", $path="auditd_host_listener"];
+	Log::add_filter(LOGLIST, filter_l);
+	}
