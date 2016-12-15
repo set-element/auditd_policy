@@ -36,6 +36,7 @@ export {
 
 	# connection_log is a logging construct that holds some of the socket_data
 	#  info as well as type fixed data like addr/port and identity info
+	#
 	type connection_log: record {
 		ts: time &log;
 		cid: conn_id &log;
@@ -54,9 +55,11 @@ export {
 	# This is the set of system calls that define the creation of a
 	#  network listening socket
 	global net_listen_syscalls: set[string] &redef;
+
 	# Duration that the socket data is allowed to live in the syscall/id
 	#  table.
 	const syscall_flush_interval: interval = 90 sec &redef;
+
 	# short term mapping designed to live for
 	#   action duration
 	global socket_lookup: table[string] of socket_data &write_expire=syscall_flush_interval;
@@ -92,6 +95,10 @@ export {
 		};
 
 	global connMetaDataTable: table[string] of connMetaData;
+	global connMetaDataHostWL: set[string] &redef;
+	global connMetaDataPortWL: set[string] &redef;
+
+
 
 	global SYS_NET_BIND_THRESHOLD =     10 &redef;
 	global SYS_NET_SOCKET_THRESHOLD =   50 &redef;
@@ -155,9 +162,12 @@ function init_cmd() : connMetaData
 	return t_cmd;
 	}
 
-event del_cmd_host(index: string, host: string)
+event del_conn_md_host(index: string, host: string)
 	{
 	local cmd: connMetaData;
+	
+	if ( host in connMetaDataHostWL )
+		return;
 
 	if ( index in connMetaDataTable) {
 		cmd = connMetaDataTable[index];
@@ -169,7 +179,7 @@ event del_cmd_host(index: string, host: string)
 		}
 	}
 
-function add_cmd_host(index: string, host: string) : count
+function add_conn_md_host(index: string, host: string) : count
 	{
 	local cmd: connMetaData;
 	local ret_val = 0;
@@ -184,7 +194,7 @@ function add_cmd_host(index: string, host: string) : count
 			ret_val = |cmd$host_scan[host]|;
 
 			# set timer to remove inserted host
-			schedule cmd_flush_interval { del_cmd_host(index, host) };
+			schedule cmd_flush_interval { del_conn_md_host(index, host) };
 			connMetaDataTable[index] = cmd;
 			}
 		}
@@ -195,9 +205,12 @@ function add_cmd_host(index: string, host: string) : count
 # For the port controls it is worth remembering that the host
 #  and port scanning are in different tables.
 
-event delete_cmd_port(index: string, host: string, prt: string)
+event delete_conn_md_port(index: string, host: string, prt: string)
 	{
 		local cmd: connMetaData;
+
+		if ( prt in connMetaDataPortWL )
+			return;
 
 		if ( index in connMetaDataTable) {
 			cmd = connMetaDataTable[index];
@@ -231,7 +244,7 @@ function add_cmd_port(index: string, host: string, prt: string) : count
 			if ( prt !in t[host]$p ) {
 				# add the port only if new
 				add t[host]$p[prt];
-				schedule cmd_flush_interval { delete_cmd_port(index, host, prt) };
+				schedule cmd_flush_interval { delete_conn_md_port(index, host, prt) };
 				connMetaDataTable[index] = cmd;
 				ret_val = |t[host]$p|;
 				}
@@ -240,7 +253,7 @@ function add_cmd_port(index: string, host: string, prt: string) : count
 			# new host
 			local t_pr: port_rec;
 			add t_pr$p[prt];
-			schedule cmd_flush_interval { delete_cmd_port(index, host, prt) };
+			schedule cmd_flush_interval { delete_conn_md_port(index, host, prt) };
 			connMetaDataTable[index] = cmd;
 			ret_val = 1;
 			}
@@ -481,7 +494,7 @@ function syscall_connect(inf: AUDITD_CORE::Info) : count
 	#
 	# Now do host scan detection
 	# is this a new host??
-	if ( add_cmd_host(cmdIndex,inf$s_host) == SYS_NET_HOSTSCAN_THRESHOLD ) {
+	if ( add_conn_md_host(cmdIndex,inf$s_host) == SYS_NET_HOSTSCAN_THRESHOLD ) {
 
 		local t_chs = "";
 		for ( l2 in cmd$host_scan ) {
