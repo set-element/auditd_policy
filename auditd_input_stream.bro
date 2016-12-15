@@ -134,8 +134,15 @@ function generic_f(data: string) : count
 	local success = AUDITD_CORE::s_string( parts[25+fluentd_offset] );
 
 	local ext: AUDITD_CORE::string_return;
-	ext = AUDITD_CORE::s_string( parts[26+fluentd_offset] );	
+	ext$data = "NULL";
 
+	#if ( |parts| > 26 ) {
+	#	ext = AUDITD_CORE::s_string( parts[26+fluentd_offset] );	
+	#	print fmt("parts = %s ; %s", |parts|, parts[27] );
+	#	}
+	#else
+	#	ext = AUDITD_CORE::s_string("NULL");
+		
 	event AUDITD_CORE::auditd_generic(index$data, action$data, ts$data, node$data, ses, pid, auid$data, comm$data, exe$data, a0$data, a1$data, a2$data, uid$data, gid$data, euid$data, egid$data, fsuid$data, fsgid$data, suid$data, sgid$data, ppid, tty$data, terminal$data, success$data, ext$data);
 
 	return 0;
