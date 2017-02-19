@@ -34,10 +34,10 @@ export {
 	#          4 = accept       -> listener connect
 	#
 
-	# connection_log is a logging construct that holds some of the socket_data
+	# host_conn_log is a logging construct that holds some of the socket_data
 	#  info as well as type fixed data like addr/port and identity info
 	#
-	type connection_log: record {
+	type host_conn_log: record {
 		ts: time &log;
 		cid: conn_id &log;
 		log_id: string &default="NULL" &log;
@@ -92,7 +92,7 @@ export {
 		#
 		host_scan: set[string];
 		port_scan: table[string] of port_rec;
-		};
+	};
 
 	global connMetaDataTable: table[string] of connMetaData;
 	global connMetaDataHostWL: set[string] &redef;
@@ -162,7 +162,7 @@ function init_cmd() : connMetaData
 	return t_cmd;
 	}
 
-event del_conn_md_host(index: string, host: string)
+event delete_conn_md_host(index: string, host: string)
 	{
 	local cmd: connMetaData;
 	
@@ -194,7 +194,7 @@ function add_conn_md_host(index: string, host: string) : count
 			ret_val = |cmd$host_scan[host]|;
 
 			# set timer to remove inserted host
-			schedule cmd_flush_interval { del_conn_md_host(index, host) };
+			schedule cmd_flush_interval { delete_conn_md_host(index, host) };
 			connMetaDataTable[index] = cmd;
 			}
 		}
@@ -502,9 +502,9 @@ function syscall_connect(inf: AUDITD_CORE::Info) : count
 			}
 
 		NOTICE([$note=AUDITD_POLICY_HostScan,
-			$msg = fmt("Host scan %s %s scan {%s} %s hosts for %s %s",
-			inf$i$log_id, inf$node, t_chs, SYS_NET_HOSTSCAN_THRESHOLD,
-			inf$i$idv[AUDITD_CORE::v_uid], inf$i$idv[AUDITD_CORE::v_gid])]);
+			$msg = fmt("ID %s %s @ %s %s scan {%s} %s hosts",
+			inf$i$idv[AUDITD_CORE::v_uid], inf$i$idv[AUDITD_CORE::v_gid],
+			inf$node, inf$i$log_id, t_chs, SYS_NET_HOSTSCAN_THRESHOLD)]);
 
 		} # end SYS_NET_HOSTSCAN_THRESHOLD
 
@@ -519,9 +519,9 @@ function syscall_connect(inf: AUDITD_CORE::Info) : count
 			}
 
 		NOTICE([$note=AUDITD_POLICY_PortScan,
-			$msg = fmt("Port scan %s %s {%s}  %s ports for %s %s",
-			inf$i$log_id, inf$node, t_cps, SYS_NET_PORTSCAN_THRESHOLD,
-			inf$i$idv[AUDITD_CORE::v_uid], inf$i$idv[AUDITD_CORE::v_gid])]);
+			$msg = fmt("%s %s @ %s %s scan {%s} %s ports",
+			inf$i$idv[AUDITD_CORE::v_uid], inf$i$idv[AUDITD_CORE::v_gid],
+			inf$node, inf$i$log_id, t_cps, SYS_NET_PORTSCAN_THRESHOLD)]);
 
 		} # end SYS_NET_PORTSCAN_THRESHOLD
 
@@ -562,271 +562,264 @@ function syscall_listen(inf: AUDITD_CORE::Info) : count
 
 		if ( cmdIndex in connMetaDataTable )
 			cmd = connMetaDataTable[cmdIndex];
-        else
-            cmd = init_cmd();
+        	else
+            		cmd = init_cmd();
 
-        local t_index = fmt("%s|%s", t_socket_data$domain, t_socket_data$s_type);
+        	local t_index = fmt("%s|%s", t_socket_data$domain, t_socket_data$s_type);
 
-        if ( t_index !in cmd$listen_err_set ) {
-                add cmd$listen_err_set[t_index];
+        	if ( t_index !in cmd$listen_err_set ) {
+                	add cmd$listen_err_set[t_index];
 
-				if ( ++cmd$listen_err_count == SYS_NET_LISTEN_THRESHOLD ) {
+			if ( ++cmd$listen_err_count == SYS_NET_LISTEN_THRESHOLD ) {
+	
+				NOTICE([$note=AUDITD_POLICY_NetError,
+					$msg = fmt("Listen error count %s [%s] [%s] for %s %s",
+					inf$i$log_id, SYS_NET_LISTEN_THRESHOLD, cmd$listen_err_set, inf$i$idv[AUDITD_CORE::v_uid],
+					inf$i$idv[AUDITD_CORE::v_gid])]);
 
-					NOTICE([$note=AUDITD_POLICY_NetError,
-						$msg = fmt("Listen error count %s [%s] [%s] for %s %s",
-						inf$i$log_id, SYS_NET_LISTEN_THRESHOLD, cmd$listen_err_set, inf$i$idv[AUDITD_CORE::v_uid],
-						inf$i$idv[AUDITD_CORE::v_gid])]);
-						}
+				} # end SYS_NET_LISTEN_THRESHOLD
 
-				} # end of t_index test
+			} # end of t_index test
 
 		connMetaDataTable[cmdIndex] = cmd;
-		}
+		} # end SYS_NET_ERR
 
 		ret_val = 1;
 		return ret_val;
+
 	} # syscall_listen end
 
 
-			function network_register_listener(inf: AUDITD_CORE::Info) : count
-				{
-				# This captures data from the system calls bind() and
-				#  accept() and checks to see if the system in question already
-				#  has an open network listener
-				#
-				# Here use the ip_id_map to store data: use {ses}{node} as the
-				#   table index.  Results for the listener will be handed over to the
-				#   systems object for further analysis.
+function network_register_listener(inf: AUDITD_CORE::Info) : count
+	{
+	# This captures data from the system calls bind() and
+	#  accept() and checks to see if the system in question already
+	#  has an open network listener
+	#
+	# Here use the ip_id_map to store data: use {ses}{node} as the
+	#   table index.  Results for the listener will be handed over to the
+	#   systems object for further analysis.
 
-				local ret_val = 0;
-				local t_socket_data: socket_data;
-				local cid: conn_id;
-				local conn_log: connection_log;
+	local ret_val = 0;
+	local t_socket_data: socket_data;
+	local cid: conn_id;
+	local conn_log: host_conn_log;
 
-				local index = fmt("%s%s%s%s", inf$node, inf$ses, inf$pid, inf$a0);
+	local index = fmt("%s%s%s%s", inf$node, inf$ses, inf$pid, inf$a0);
 
-				if ( index in socket_lookup )
-					t_socket_data = socket_lookup[index];
-				else
-					return ret_val;
+	if ( index in socket_lookup )
+		t_socket_data = socket_lookup[index];
+	else
+		return ret_val;
 
-				# sanity check the data
-				if ( t_socket_data$domain == "PF_INET" || t_socket_data$domain == "PF_INET6" ) {
-					ret_val = 1;
-					}
-				else {
-					return ret_val;
-					}
+	# sanity check the data
+	if ( t_socket_data$domain == "PF_INET" || t_socket_data$domain == "PF_INET6" ) {
+		ret_val = 1;
+		}
+	else {
+		return ret_val;
+		}
 
-				ret_val = 1;
+	ret_val = 1;
 
-				# ptype for building a connection object, log_protocol for logging.
-				local ptype = "NULL";
-				local log_protocol = "NULL";
-				local sp = t_socket_data$s_prot;
+	# ptype for building a connection object, log_protocol for logging.
+	local ptype = "NULL";			# protocol type
+	local log_protocol = "NULL";		# name we give the protocol
+	local sp = t_socket_data$s_prot;	# 
 
-				if ( sp == "UNSET" ) {
-					# The protocol was not explicitly set at socket gen time so
-					#   we do a little figgurin' based on the type
-					#
-					if ( t_socket_data$s_type == "SOCK_STREAM" ) {
-						ptype = "tcp";
-						log_protocol = "TCP";
-						}
-					else if ( t_socket_data$s_type == "SOCK_DGRAM" ) {
-						ptype = "udp";
-						log_protocol = "UDP";
-						}
-					else if ( t_socket_data$s_type == "SOCK_RAW" ) {
-						ptype = "udp";
-						log_protocol = "ICMP";
-						}
-					else {
-						ptype="udp";
-						log_protocol = "UNKNOWN";
-						}
-					}
-				else if (( sp == "TCP" ) || ( sp == "UDP" )) {
+	if ( sp == "UNSET" ) {
+		# The protocol was not explicitly set at socket gen time so
+		#   we do a little figgurin' based on the type
+		#
+		if ( t_socket_data$s_type == "SOCK_STREAM" ) {
+			ptype = "tcp";
+			log_protocol = "TCP";
+			}
+		else if ( t_socket_data$s_type == "SOCK_DGRAM" ) {
+			ptype = "udp";
+			log_protocol = "UDP";
+			}
+		else if ( t_socket_data$s_type == "SOCK_RAW" ) {
+			ptype = "udp";
+			log_protocol = "ICMP";
+			}
+		else {
+			ptype="udp";
+			log_protocol = "UNKNOWN";
+			}
+		}
+	else if (( sp == "TCP" ) || ( sp == "UDP" )) {
 
-					ptype = to_lower(sp);
-					log_protocol = sp;
-					}
-				else {
-					log_protocol = sp;
-					}
-
-
-				# test and create the port sets
-				# resp ports
-				if ( ptype != "NULL" )
-					conn_log$cid$resp_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$r_port_info, ptype));
-				else
-					conn_log$cid$resp_p = AUDITD_CORE::s_port( fmt("0/%s", ptype));
-
-				# orig ports
-				if ( ptype != "NULL" )
-					conn_log$cid$orig_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$o_port_info, ptype));
-				else
-					conn_log$cid$orig_p = AUDITD_CORE::s_port( fmt("%s/%s", inf$s_serv, log_protocol));
-
-				# IP Addresses
-				# resp host
-				if ( t_socket_data$r_addr_info != "NULL" )
-					conn_log$cid$resp_h = to_addr( fmt("%s", t_socket_data$r_addr_info) );
-				else
-					conn_log$cid$resp_h = to_addr("0.0.0.0");
-
-				# orig host
-				if ( t_socket_data$o_addr_info != "NULL" )
-					conn_log$cid$orig_h = to_addr( fmt("%s", t_socket_data$o_addr_info) );
-				else
-					conn_log$cid$orig_h = to_addr( fmt("%s", inf$s_host) );
-
-				conn_log$ts =           inf$ts;
-				conn_log$state = 	inf$key;
-				conn_log$log_id = 	inf$i$log_id;
-				conn_log$protocol = 	log_protocol;
-				conn_log$ses = 		inf$i$ses;
-				conn_log$node = 	inf$i$node;
-				conn_log$uid = 		inf$i$idv[AUDITD_CORE::v_uid];
-				conn_log$gid = 		inf$i$idv[AUDITD_CORE::v_gid];
-				conn_log$euid = 	inf$i$idv[AUDITD_CORE::v_euid];
-				conn_log$egid = 	inf$i$idv[AUDITD_CORE::v_egid];
-
-				Log::write(LOGLIST, conn_log);
-				#delete socket_lookup[index];
-
-				return ret_val;
-				}
+		ptype = to_lower(sp);
+		log_protocol = sp;
+		}
+	else {
+		log_protocol = sp;
+		}
 
 
-			function network_register_conn(inf: AUDITD_CORE::Info) : count
-				{
-				# Log network connection data to assist in mapping user activity with
-				#  an external network facing bro.
-				#
+	# test and create the port sets
+	# resp/orig ports
+	if ( ptype != "NULL" ) {
+		conn_log$cid$resp_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$r_port_info, ptype));
+		conn_log$cid$orig_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$o_port_info, ptype));
+		}
+	else {
+		conn_log$cid$resp_p = AUDITD_CORE::s_port( fmt("0/%s", ptype));
+		conn_log$cid$orig_p = AUDITD_CORE::s_port( fmt("%s/%s", inf$s_serv, log_protocol));
+		}
 
-				local ret_val = 0;
-				local t_socket_data: socket_data;
-				local cid: conn_id;
-				local conn_log: connection_log;
+	# IP Addresses
+	# resp host
+	if ( t_socket_data$r_addr_info != "NULL" )
+		conn_log$cid$resp_h = to_addr( fmt("%s", t_socket_data$r_addr_info) );
+	else
+		conn_log$cid$resp_h = to_addr("0.0.0.0");
 
-				# For the time being we focus on succesful connect() syscalls - in
-				#  this event the "error" code will be 0.
-				#if ( to_int(inf$ext) != 0 )
-				#	return ret_val;
+	# orig host
+	if ( t_socket_data$o_addr_info != "NULL" )
+		conn_log$cid$orig_h = to_addr( fmt("%s", t_socket_data$o_addr_info) );
+	else
+		conn_log$cid$orig_h = to_addr( fmt("%s", inf$s_host) );
 
-				local index = fmt("%s%s%s%s", inf$node, inf$ses, inf$pid, inf$a0);
+	conn_log$ts =           inf$ts;
+	conn_log$state = 	inf$key;
+	conn_log$log_id = 	inf$i$log_id;
+	conn_log$protocol = 	log_protocol;
+	conn_log$ses = 		inf$i$ses;
+	conn_log$node = 	inf$i$node;
+	conn_log$uid = 		inf$i$idv[AUDITD_CORE::v_uid];
+	conn_log$gid = 		inf$i$idv[AUDITD_CORE::v_gid];
+	conn_log$euid = 	inf$i$idv[AUDITD_CORE::v_euid];
+	conn_log$egid = 	inf$i$idv[AUDITD_CORE::v_egid];
 
-				if ( index in socket_lookup )
-					t_socket_data = socket_lookup[index];
-				#else
-				#	return ret_val;
+	Log::write(LOGLIST, conn_log);
+	#delete socket_lookup[index];
 
-				# sanity check the data: make sure that it is IP based
-				if ( t_socket_data$domain == "PF_INET" || t_socket_data$domain == "PF_INET6" ) {
-					ret_val = 1;
-					}
-				else {
-					return ret_val;
-					}
+	return ret_val;
+	}
 
-				# and that there is some sort of destination addressing to work with
-				if ( (t_socket_data$r_addr_info == "NULL") || (t_socket_data$r_port_info == "NULL")) {
-					return ret_val;
-					}
 
-				ret_val = 1;
+function network_register_conn(inf: AUDITD_CORE::Info) : count
+	{
+	# Log network connection data to assist in mapping user activity with
+	#  an external network facing bro.
+	#
 
-				# ptype for building a connection object, log_protocol for logging.
-				local ptype = "NULL";
-				local log_protocol = "NULL";
-				local sp = t_socket_data$s_prot;
+	local ret_val = 0;
+	local t_socket_data: socket_data;
+	local cid: conn_id;
+	local conn_log: host_conn_log;
 
-				if ( sp == "UNSET" ) {
-					# The protocol was not explicitly set at socket gen time so
-					#   we go a little figgurin' based on the type
-					#
-					if ( t_socket_data$s_type == "SOCK_STREAM" ) {
-						ptype = "tcp";
-						log_protocol = "TCP";
-						}
-					else if ( t_socket_data$s_type == "SOCK_DGRAM" ) {
-						ptype = "udp";
-						log_protocol = "UDP";
-						}
-					else if ( t_socket_data$s_type == "SOCK_RAW" ) {
-						ptype = "udp";
-						log_protocol = "ICMP";
-						}
-					else {
-						ptype="udp";
-						log_protocol = "UNKNOWN";
-						}
-					}
-				else if (( sp == "TCP" ) || ( sp == "UDP" )) {
+	# For the time being we focus on succesful connect() syscalls - in
+	#  this event the "error" code will be 0.
+	#if ( to_int(inf$ext) != 0 )
+	#	return ret_val;
 
-					ptype = to_lower(sp);
-					log_protocol = sp;
-					}
-				else {
-					log_protocol = sp;
-					}
+	local index = fmt("%s%s%s%s", inf$node, inf$ses, inf$pid, inf$a0);
 
-				# test and create the port sets
-				# resp ports
-				#if ( ptype != "NULL" )
-			print fmt(">>> %s <<< ", t_socket_data);
-			print fmt("r_port_info: %s",t_socket_data$r_port_info);
-			print fmt("ptype: %s", ptype);
+	if ( index in socket_lookup )
+		t_socket_data = socket_lookup[index];
+	#else
+	#	return ret_val;
 
-					conn_log$cid$resp_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$r_port_info, ptype));
-				#else
-				#	conn_log$cid$resp_p = AUDITD_CORE::s_port( fmt("0/%s", ptype));
+	# sanity check the data: make sure that it is IP based
+	if ( t_socket_data$domain == "PF_INET" || t_socket_data$domain == "PF_INET6" ) {
+		ret_val = 1;
+		}
+	else {
+		return ret_val;
+		}
 
-				# orig ports
-				if ( ptype != "NULL" )
-					conn_log$cid$orig_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$o_port_info, ptype));
-				else
-					conn_log$cid$orig_p = AUDITD_CORE::s_port( fmt("0/%s", ptype));
+	# and that there is some sort of destination addressing to work with
+	if ( (t_socket_data$r_addr_info == "NULL") || (t_socket_data$r_port_info == "NULL")) {
+		return ret_val;
+		}
 
-				# IP Addresses
-				# resp host
-				if ( t_socket_data$r_addr_info != "NULL" )
-					conn_log$cid$resp_h = to_addr( fmt("%s", t_socket_data$r_addr_info) );
-				else
-					conn_log$cid$resp_h = to_addr("0.0.0.0");
+	ret_val = 1;
 
-				# orig host
-				if ( t_socket_data$o_addr_info != "NULL" )
-					conn_log$cid$orig_h = to_addr( fmt("%s", t_socket_data$o_addr_info) );
-				else
-					conn_log$cid$orig_h = to_addr("0.0.0.0");
+	# ptype for building a connection object, log_protocol for logging.
+	local ptype = "NULL";
+	local log_protocol = "NULL";
+	local sp = t_socket_data$s_prot;
 
-				conn_log$ts = 		inf$ts;
-				conn_log$state = 	inf$key;
-				conn_log$log_id =       inf$i$log_id;
-				conn_log$protocol = 	log_protocol;
-				conn_log$ses = 		inf$ses;
-				conn_log$node = 	inf$i$node;
-				conn_log$uid = 		inf$i$idv[AUDITD_CORE::v_uid];
-				conn_log$gid = 		inf$i$idv[AUDITD_CORE::v_gid];
-				conn_log$euid = 	inf$i$idv[AUDITD_CORE::v_euid];
-				conn_log$egid = 	inf$i$idv[AUDITD_CORE::v_egid];
+	if ( sp == "UNSET" ) {
+		# The protocol was not explicitly set at socket gen time so
+		#   we go a little figgurin' based on the type
+		#
+		if ( t_socket_data$s_type == "SOCK_STREAM" ) {
+			ptype = "tcp";
+			log_protocol = "TCP";
+			}
+		else if ( t_socket_data$s_type == "SOCK_DGRAM" ) {
+			ptype = "udp";
+			log_protocol = "UDP";
+			}
+		else if ( t_socket_data$s_type == "SOCK_RAW" ) {
+			ptype = "udp";
+			log_protocol = "ICMP";
+			}
+		else {
+			ptype="udp";
+			log_protocol = "UNKNOWN";
+			}
+		}
+	else if (( sp == "TCP" ) || ( sp == "UDP" )) {
 
-				Log::write(LOGCONN, conn_log);
-				#delete socket_lookup[index];
+		ptype = to_lower(sp);
+		log_protocol = sp;
+		}
+	else {
+		log_protocol = sp;
+		}
 
-				return 0;
-				}
+	# test and create the port sets
+
+	# orig/resp ports
+	if ( ptype != "NULL" ) {
+		conn_log$cid$resp_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$r_port_info, ptype));
+		conn_log$cid$orig_p = AUDITD_CORE::s_port( fmt("%s/%s", t_socket_data$o_port_info, ptype));
+		}
+	else
+		conn_log$cid$orig_p = AUDITD_CORE::s_port( fmt("0/%s", ptype));
+
+	# IP Addresses
+	# resp host
+	if ( t_socket_data$r_addr_info != "NULL" )
+		conn_log$cid$resp_h = to_addr( fmt("%s", t_socket_data$r_addr_info) );
+	else
+		conn_log$cid$resp_h = to_addr("0.0.0.0");
+
+	# orig host
+	if ( t_socket_data$o_addr_info != "NULL" )
+		conn_log$cid$orig_h = to_addr( fmt("%s", t_socket_data$o_addr_info) );
+	else
+		conn_log$cid$orig_h = to_addr("0.0.0.0");
+
+	conn_log$ts = 		inf$ts;
+	conn_log$state = 	inf$key;
+	conn_log$log_id =       inf$i$log_id;
+	conn_log$protocol = 	log_protocol;
+	conn_log$ses = 		inf$ses;
+	conn_log$node = 	inf$i$node;
+	conn_log$uid = 		inf$i$idv[AUDITD_CORE::v_uid];
+	conn_log$gid = 		inf$i$idv[AUDITD_CORE::v_gid];
+	conn_log$euid = 	inf$i$idv[AUDITD_CORE::v_euid];
+	conn_log$egid = 	inf$i$idv[AUDITD_CORE::v_egid];
+
+	Log::write(LOGCONN, conn_log);
+	#delete socket_lookup[index];
+
+	return 0;
+	}
 
 event bro_init()
 	{
-	Log::create_stream(AUDITD_POLICY::LOGCONN, [$columns=connection_log]);
+	Log::create_stream(AUDITD_POLICY::LOGCONN, [$columns=host_conn_log]);
 	local filter_c: Log::Filter = [$name="default", $path="auditd_host_conn"];
 	Log::add_filter(LOGCONN, filter_c);
 
-	Log::create_stream(AUDITD_POLICY::LOGLIST, [$columns=connection_log]);
+	Log::create_stream(AUDITD_POLICY::LOGLIST, [$columns=host_conn_log]);
 	local filter_l: Log::Filter = [$name="default", $path="auditd_host_listener"];
 	Log::add_filter(LOGLIST, filter_l);
 	}
