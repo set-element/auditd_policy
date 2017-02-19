@@ -319,8 +319,10 @@ event auditdLine(description: Input::EventDescription, tpe: Input::Event, LV: li
 		
 		if ( event_name in dispatcher ) 
 			dispatcher[event_name](LV$d);
-		else
-			print fmt("BAD EVENT NAME: %s", event_name);
+		else {
+			local msg = fmt("BAD EVENT NAME: %s", event_name);
+			event reporter_info(network_time(), msg, peer_description);
+			}
 		}
 
 	}
@@ -370,7 +372,7 @@ event transaction_rate()
 	}
 
         input_count_delta = input_count - input_count_prev;
-        print fmt("%s Log delta: %s", network_time(),input_count_delta);
+        #print fmt("%s Log delta: %s", network_time(),input_count_delta);
 
         # rate is too low - send a notice the first time
         if (input_count_delta <= input_low_water) {
@@ -384,8 +386,12 @@ event transaction_rate()
                         }
 
                 # Now reset the reader
+		event reporter_info(network_time(), "stopping reader", peer_description);
                 schedule 1 sec { AUDITD_IN_STREAM::stop_reader() };
+
+		event reporter_info(network_time(), "starting reader in 10s", peer_description);
                 schedule 10 sec { AUDITD_IN_STREAM::start_reader() };
+
         	schedule 70 sec { transaction_rate() };
 		input_count_prev = input_count;
 		return;
@@ -425,7 +431,7 @@ function init_datastream()
 
 
 		# start rate monitoring for event stream
-		print fmt("init input_test_interval");
+		event reporter_info(network_time(), "init input_test_interval", peer_description);
 		schedule input_test_interval { transaction_rate() };
 		}	
 
