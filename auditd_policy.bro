@@ -10,9 +10,15 @@
 #   systems is reasonably high.  Because of this the node identity is appended to
 #   ses and pid values since the internal systems should remove duplicate values.
 #
+# From a design perspective, the auditd_policy is more of a routing layer with most
+#  landing code placed in other policy files for clarity and readability.  All
+#  auditd_policy* policy lives in the same AUDITD_POLICY namespace.
+#
+
 @load auditd_policy/util
 @load auditd_policy/auditd_core
-@load auditd_policy/auditd_net
+@load auditd_policy/auditd_policy_net
+@load auditd_policy/auditd_policy_exec
 
 module AUDITD_POLICY;
 
@@ -20,7 +26,6 @@ export {
 	redef enum Notice::Type += {
 		AUDITD_IDTransform,
 		AUDITD_IDTransformSkip,
-		AUDITD_ExecPathcheck,
 		AUDITD_Longtime,
 		AUDITD_FileMetadata,
 		AUDITD_POLICY_UserLocation,
@@ -35,37 +40,21 @@ export {
 	global whitelist_to_id: set[string] = { "NULL", "-1", } &redef;
 	global whitelist_from_id: set[string] = { "NULL", "-1" } &redef;
 
-	# this tracks rolling execution history of user and is
-	#   keyed on the longer lived identity AUDITD_CORE::Info$i$auid value.
-	type history_rec: record {
-		exec_hist:	vector of string;
-		exec_count:	count &default = 0;
-		};
-
-	global execution_history_length: count = 5 &redef;
-	global execution_history: table[string] of history_rec;
-
 	# -- #
-	global clear_exec_hist: event(id: string);
 
-	global auditd_policy_dispatcher: function(i: AUDITD_CORE::Info);
-
-	global auditd_execve: function(i: AUDITD_CORE::Info);
 	global auditd_generic: function(i: AUDITD_CORE::Info);
 	global auditd_place: function(i: AUDITD_CORE::Info);
 	global auditd_saddr: function(i: AUDITD_CORE::Info);
 	global auditd_syscall: function(i: AUDITD_CORE::Info);
 	global auditd_user: function(i: AUDITD_CORE::Info);
-
+	global process_identity: function(new_info: AUDITD_CORE::Info) : vector of string;
+	global auditd_policy_dispatcher: function(i: AUDITD_CORE::Info);
 	global identity_time_test: event(ses: int, node: string, n: int, exe: string, did: string);
-	# # Execution configuration #
-	# blacklist of suspicous execution bases
-	global exec_blacklist = /^\/dev/ | /^\/var\/run/ &redef;
-	global exec_blacklist_test = T &redef;
 
 	# identiy related configs
 	global identity_drift_test = T &redef;
 	global id_test_delay: interval = 5 sec &redef;
+	global user_exec_history_test = T &redef;
 
 	# Table of allowed identity transitions
 	global identity_transition_wl: table[string] of string &redef;
@@ -115,6 +104,7 @@ global NULL_ID: string = "-1";
 # This function compares two id values and in the event that
 #  the post value are not whitelisted you get {0,1,2}
 #  depending on results.
+
 function identity_atomic(old_id: string, new_id: string): bool
 	{
 	local ret_val = F;
@@ -128,6 +118,35 @@ function identity_atomic(old_id: string, new_id: string): bool
 
 	return ret_val;
 	}
+
+function process_wrapper(inf: AUDITD_CORE::Info) : count
+        {
+        # There are many things to be done with the execution chain.  This is the wrapper
+        #   for that set of things to do.
+        # If the session bit has not been set, this will get dumped since those activities
+        #   tend to be more system internal related.
+        #
+        local ret_val = 0;
+
+        if ( exec_blacklist_test )
+                exec_pathcheck(inf$exe);
+
+        # for now comment this out.  SC; Feb 19/2017
+        #local xh = exec_history(inf);
+
+        # track id drift
+        if ( identity_drift_test ) {
+                # vector of string
+                local change_value = process_identity(inf);
+                }
+
+        # build user-execution history
+        #if ( user_exec_history_test ) {
+        #       user_exec_history(inf);
+        #       }
+
+        return ret_val;
+        }
 
 function file_error(inf: AUDITD_CORE::Info)
 	{
@@ -150,7 +169,8 @@ function file_error(inf: AUDITD_CORE::Info)
 
 			if ( ++t_fmd$open_error == SYS_FILE_OPEN_THRESHOLD ) {
 				NOTICE([$note=AUDITD_FileMetadata,
-					$msg=fmt("SYS_FILE_OPEN_ERR %s %s %s errors %s", inf$i$log_id, inf$i$idv[1], SYS_FILE_OPEN_THRESHOLD, t_fmd$open_error_set )]);
+					$msg=fmt("SYS_FILE_OPEN_ERR %s @ %s %s %s errors {%s}", 
+						inf$i$idv[1], inf$node, inf$i$log_id, SYS_FILE_OPEN_THRESHOLD, t_fmd$open_error_set )]);
 				}
 			break;
 
@@ -161,7 +181,8 @@ function file_error(inf: AUDITD_CORE::Info)
 
 			if ( ++t_fmd$create_error == SYS_FILE_CREATE_THRESHOLD ) {
 				NOTICE([$note=AUDITD_FileMetadata,
-					$msg=fmt("SYS_FILE_CREATE_ERR %s %s %s errors %s", inf$i$log_id, inf$i$idv[1], SYS_FILE_CREATE_THRESHOLD, t_fmd$create_error_set )]);
+					$msg=fmt("SYS_FILE_CREATE_ERR %s @ %s %s %s errors {%s}", 
+						inf$i$idv[1], inf$node, inf$i$log_id, SYS_FILE_CREATE_THRESHOLD, t_fmd$open_error_set )]);
 				}
 			break;
 
@@ -172,7 +193,8 @@ function file_error(inf: AUDITD_CORE::Info)
 
 			if ( ++t_fmd$mod_error == SYS_FILE_MOD_THRESHOLD ) {
 				NOTICE([$note=AUDITD_FileMetadata,
-					$msg=fmt("SYS_FILE_MOD_ERR %s %s %s errors %s", inf$i$log_id, inf$i$idv[1], SYS_FILE_MOD_THRESHOLD, t_fmd$mod_error_set )]);
+					$msg=fmt("SYS_FILE_MOD_ERR %s @ %s %s %s errors {%s}", 
+						inf$i$idv[1], inf$node, inf$i$log_id, SYS_FILE_MOD_THRESHOLD, t_fmd$open_error_set )]);
 				}
 			break;
 
@@ -183,7 +205,8 @@ function file_error(inf: AUDITD_CORE::Info)
 
 			if ( ++t_fmd$mod_error == SYS_FILE_MOD_THRESHOLD ) {
 				NOTICE([$note=AUDITD_FileMetadata,
-					$msg=fmt("SYS_FILE_MOD_ERR %s %s %s errors %s", inf$i$log_id, inf$i$idv[1], SYS_FILE_MOD_THRESHOLD, t_fmd$mod_error_set )]);
+					$msg=fmt("SYS_FILE_PERM_ERR %s @ %s %s %s errors {%s}", 
+						inf$i$idv[1], inf$node, inf$i$log_id, SYS_FILE_MOD_THRESHOLD, t_fmd$open_error_set )]);
 				}
 			break;
 
@@ -194,7 +217,8 @@ function file_error(inf: AUDITD_CORE::Info)
 
 			if ( ++t_fmd$delete_error == SYS_FILE_DELETE_THRESHOLD ) {
 				NOTICE([$note=AUDITD_FileMetadata,
-					$msg=fmt("SYS_FILE_DELETE_ERR %s %s %s errors %s", inf$i$log_id, inf$i$idv[1], SYS_FILE_DELETE_THRESHOLD, t_fmd$delete_error_set )]);
+					$msg=fmt("SYS_FILE_DELETE_ERR %s @ %s %s %s errors {%s}", 
+						inf$i$idv[1], inf$node, inf$i$log_id, SYS_FILE_DELETE_THRESHOLD, t_fmd$open_error_set )]);
 				}
 			break;
 
@@ -291,73 +315,6 @@ function process_identity(new_info: AUDITD_CORE::Info) : vector of string
 	return ret_val;
 	}
 
-function exec_pathcheck(exec_path: string) : count
-	{
-	# given a list of directory prefixes, check to see if the path
-	#  sits in any of them
-	# note that the path provided is should be consitered 'absolute'.
-
-	local ret_val = 0;
-
-	if ( exec_blacklist in exec_path ) {
-
-		#print fmt("EXECBLACKLIST: %s", exec_path);
-		NOTICE([$note=AUDITD_ExecPathcheck,
-			$msg=fmt("Exec path on blacklist: %s", exec_path)]);
-
-		ret_val = 1;
-		}
-
-	return ret_val;
-	}
-
-function exec_history(inf: AUDITD_CORE::Info) : history_rec
-	{
-	# Mostly this is a library function to track execution
-	#  to look into in the event of a permission transition
-	#
-
-	local id = fmt("%s:%s_%s", inf$node, inf$ses, inf$pid);
-	local xvalue = fmt("%s_%s", inf$syscall, inf$exe);
-	local t_hrec: history_rec;
-
-	if ( id !in execution_history ) {
-		# new identity
-		t_hrec$exec_hist = vector("NULL", "NULL", "NULL", "NULL", "NULL");
-		t_hrec$exec_count = 0;
-		t_hrec$exec_hist[0] = xvalue;
-		}
-	else {
-		t_hrec = execution_history[id];
-		# calculate new position in table
-		++t_hrec$exec_count;
-		local n = t_hrec$exec_count % execution_history_length;
-		#print fmt("exec history [%s]: %s %s %s", n, xvalue, id, inf$i$idv);
-		t_hrec$exec_hist[n] = xvalue;
-		}
-
-	execution_history[id] = t_hrec;
-	return t_hrec;
-	}
-
-function sort_exec_history(hrec: history_rec) : vector of string
-	{
-	local miniloop: vector of count = vector(0,1,2,3,4);
-	local ret_val = vector("NULL", "NULL", "NULL", "NULL", "NULL");
-
-	for ( i in miniloop ) {
-
-		if ( (hrec$exec_count - i) > 0 ) {
-			ret_val[i] = hrec$exec_hist[((hrec$exec_count - i) % execution_history_length)];
-			}
-		}
-
-	return ret_val;
-	}
-
-
-
-
 function transition_whitelist(trans: string) : bool
 	{
 	# default value is unsafe
@@ -368,30 +325,6 @@ function transition_whitelist(trans: string) : bool
 	#   identity_transition_wl
 	if ( trans in identity_transition_wl )
 		ret_val = T;
-
-	return ret_val;
-	}
-
-
-function process_wrapper(inf: AUDITD_CORE::Info) : count
-	{
-	# There are many things to be done with the execution chain.  This is the wrapper
-	#   for that set of things to do.
-	# If the session bit has not been set, this will get dumped since those activities
-	#   tend to be more system internal related.
-	#
-	local ret_val = 0;
-
-	if ( exec_blacklist_test )
-		exec_pathcheck(inf$exe);
-
-	local xh = exec_history(inf);
-
-	# track id drift
-	if ( identity_drift_test ) {
-		# vector of string
-		local change_value = process_identity(inf);
-		}
 
 	return ret_val;
 	}
@@ -418,15 +351,6 @@ function process_place(inf: AUDITD_CORE::Info) : count
 #      Events
 # ----- # ----- #
 
-event clear_exec_hist(id: string)
-        {
-
-        if ( id in execution_history ) {
-                delete execution_history[id];
-                }
-        }
-
-
 event identity_time_test(ses: int, node: string, n: int, exe: string, did: string)
 	{
 	local t_id = AUDITD_CORE::get_identity_id(ses, node);
@@ -451,6 +375,8 @@ function auditd_policy_dispatcher(inf: AUDITD_CORE::Info)
 	{
 	# This makes routing decisions for policy based on AUDITD_CORE::Info content.  It is
 	#  a bit of a kluge, but will have to do for now.
+	#
+	# Records passed to this function are complete.
 
 	# Initial filtering based on action and key values
 	#  ex: {PLACE_OBJ, PATH} .
@@ -460,8 +386,9 @@ function auditd_policy_dispatcher(inf: AUDITD_CORE::Info)
 	local key    = inf$key;
 	local syscall = inf$syscall;
 
-	local net_syscall_set = set( "connect", "bind", "listen", "socket", "socketpair", "accept", "accept4", "sendto") &redef;
+	local net_syscall_set = set( "connect", "bind", "listen", "socket", "socketpair", "accept", "accept4", "sendto" ) &redef;
 	local file_error_set = set( "SYS_FILE_OPEN_ERR", "SYS_FILE_CREATE_ERR", "SYS_FILE_MOD_ERR", "SYS_FILE_DELETE_ERR", "SYS_FILE_PERM_ERR" ) &redef;
+	local kernel_modify_set = set( "init_module", "create_module", "query_module", "delete_module" ) &redef;
 
 	switch ( action ) {
 		case "EXECVE":
@@ -552,6 +479,12 @@ function auditd_policy_dispatcher(inf: AUDITD_CORE::Info)
 			if ( key in file_error_set ) {
 				file_error(inf);
 				}
+
+			# check on kernel module (un)loading
+			if ( syscall in kernel_modify_set ) {
+				kernel_module_process(inf);	
+				}
+
 			break;
 		case "USER":
 			#process_wrapper(inf);
